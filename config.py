@@ -76,7 +76,8 @@ LOSS_MAP = {
 
 SEED = 42
 DATA_PATH = "data"
-USE_WANDB = False
+USE_WANDB = True
+
 
 @dataclass
 class DatasetModelSpec:
@@ -112,10 +113,11 @@ class TrainConfig:
 @dataclass
 class SplitConfig:
     name: str = "iid"
-    num_splits: int = 0 # should be equal to num_clients
+    num_splits: int = 0  # should be equal to num_clients
     # Train test split ratio within the client,
     # Now this is auto determined by the test set size
     # test_fractions: list[float] = field(init=False, default_factory=list)
+
 
 @dataclass
 class NoisyImageSplitConfig(SplitConfig):
@@ -171,7 +173,6 @@ class Config:
     checkpoint_every: int = 10
 
 
-FedAvgConfig = Config
 @dataclass
 class CGSVConfig(Config):
     beta: float = 1.0
@@ -179,50 +180,76 @@ class CGSVConfig(Config):
     gamma: float = 0.25
 
 
-def compile_config(strategy: str, load_from_dir="") -> Config:
-    """Compile the configuration dictionary"""
-    if load_from_dir:
-        with open(load_from_dir + "/config.yaml", "r") as f:
-            cfg_dict = yaml.load(f, Loader=yaml.FullLoader)
-        strategy = cfg_dict["name"]
-        print("Resuming from: ", load_from_dir)
+CONFIG_MAP = {
+    "fedavg": Config,
+    "cgsv": CGSVConfig,
+    "rffl": Config,
+}
 
+
+def set_debug_config(cfg: Config) -> Config:
+    global USE_WANDB
+    USE_WANDB = False
+
+    cfg.dataset.subsample_fraction = 0.05
+    cfg.train.epochs = 1
+    cfg.num_rounds = 3
+    cfg.num_clients = 6
+    return cfg
+
+def get_default_config(strategy: str) -> Config:
+    return Config(
+        TrainConfig(), DatasetConfig(), SplitConfig(), model="rffl_cnn", name=strategy
+    )
+
+
+def get_fedavg_config() -> Config:
+    cfg = Config(
+        desc="FedAvg on CIFAR10, Dirichlet split, alpha=0.1",
+        model="rffl_cnn",
+        num_clients=6,
+        num_rounds=500,
+        seed=SEED,
+        train=TrainConfig(
+            epochs=1,
+            lr=0.01,
+            batch_size=128,
+            eval_batch_size=128,
+            device="auto",
+            optimizer="sgd",
+            loss_name="crossentropy",
+            scheduler="exponential",
+            lr_decay=0.977,
+        ),
+        split=DirichletSplitConfig(name="dirichlet", alpha=0.1),
+        dataset=DatasetConfig(
+            name="fast_cifar10",
+            seed=SEED,
+            subsample_fraction=1.0,
+        ),
+    )
+    return cfg
+
+
+def load_config(cfg_dir: str) -> Config:
+    with open(cfg_dir + "/config.yaml", "r") as f:
+        cfg_dict = yaml.load(f, Loader=yaml.FullLoader)
+    strategy = cfg_dict["name"]
+    print("Strategy: ", strategy)
+    print("Resuming from: ", cfg_dir)
+    cfg = CONFIG_MAP[strategy](**cfg_dict)
+    return cfg
+
+
+def compile_config(strategy: str) -> Config:
+    """Compile the configuration dictionary"""
     print("Strategy: ", strategy)
     print("\n")
 
     match strategy:
         case "fedavg":
-            if load_from_dir:
-                cfg = Config(**cfg_dict)
-            else:
-                cfg = Config(
-                    desc="FedAvg on CIFAR10",
-                    model="rffl_cnn",
-                    num_clients=6,
-                    num_rounds=3,
-                    seed=SEED,
-                    train=TrainConfig(
-                        epochs=1,
-                        lr=0.01,
-                        batch_size=128,
-                        eval_batch_size=128,
-                        device="auto",
-                        optimizer="sgd",
-                        loss_name="crossentropy",
-                        scheduler="exponential",
-                        lr_decay=0.977,
-                    ),
-                    split=DirichletSplitConfig(
-                        name="dirichlet", alpha=0.1
-                    ),
-                    dataset=DatasetConfig(
-                        name="fast_cifar10",
-                        seed=SEED,
-                        subsample_fraction=0.2,
-
-                    ),
-                )
-                cfg.split.num_splits = cfg.num_clients
+            cfg = get_fedavg_config()
+            cfg.split.num_splits = cfg.num_clients
             return cfg
         case _:
             raise NotImplementedError

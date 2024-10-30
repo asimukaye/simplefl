@@ -224,7 +224,7 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
     ## Start Training
     for curr_round in range(start_round, cfg.num_rounds):
         # logger.info(f"-------- Round: {curr_round} --------\n")
-        logger.info(f"\n-------- Round: {curr_round} --------\n")
+        logger.info(f"-------- Round: {curr_round} --------\n")
 
         loop_start = time.time()
 
@@ -340,6 +340,6 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
         #     f"------------ Round {curr_round} completed in time: {loop_end} ------------"
         # )
         logger.info(
-            f"------------ Round {curr_round} completed in time: {loop_end} ------------"
+            f"------------ Round {curr_round} completed in time: {loop_end} ------------\n"
         )
     torch.save(global_model.state_dict(), f"final_model.pt")

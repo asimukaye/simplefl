@@ -16,7 +16,7 @@ from torch.nn import Module
 from torch.backends import cudnn, mps
 from torch.utils.data import Dataset
 
-from config import compile_config, DatasetConfig, Config, USE_WANDB
+from config import compile_config, load_config, USE_WANDB
 from data import load_raw_dataset
 from model import init_model
 from icecream import install, ic
@@ -70,29 +70,30 @@ def setup_logging():
     )
     stream_handler.setFormatter(formatter)
     root_logger.addHandler(stream_handler)
-    # root_logger.han
 
-    # file_handler = logging.FileHandler("log.txt")
-    # file_handler.mode = "a"
-    # file_handler.setLevel(logging.INFO)
-    # file_handler.setFormatter(verbose_formatter)
-    # child_logger.addHandler(file_handler)
-
-    print(root_logger.handlers)
+    file_handler = logging.FileHandler("log.txt")
+    file_handler.mode = "a"
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(verbose_formatter)
+    root_logger.addHandler(file_handler)
 
     # exit(0)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--strategy", type=str, default="fedavg")
-    parser.add_argument("--resume_from", type=str, default="")
+    parser.add_argument("-s", "--strategy", type=str, default="fedavg")
+    parser.add_argument("-r", "--resume_from", type=str, default="")
+    parser.add_argument("-d", "--debug", action="store_true")
 
     args = parser.parse_args()
 
     start_time = time.time()
 
-    cfg = compile_config(args.strategy, args.resume_from)
+    if args.resume_from:
+        cfg = load_config(args.resume_from)
+    else:
+        cfg = compile_config(args.strategy)
 
     print(yaml.dump(asdict(cfg)))
     input("Press Enter to continue...")
@@ -118,6 +119,7 @@ if __name__ == "__main__":
             yaml.dump(asdict(cfg), f)
 
     setup_logging()
+
     if USE_WANDB:
         run = wandb.init(
             project="simplefl",
