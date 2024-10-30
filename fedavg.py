@@ -19,7 +19,7 @@ from utils import (
     find_server_checkpoint,
     load_server_checkpoint,
     save_checkpoint,
-    get_accuracy
+    get_accuracy,
 )
 from data import DatasetPair
 from split import get_client_datasets
@@ -29,7 +29,6 @@ from config import TrainConfig, Config, USE_WANDB
 # from sklearn.metrics import accuracy_score
 
 logger = logging.getLogger(__name__)
-
 
 
 @torch.no_grad()
@@ -224,8 +223,9 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
 
     ## Start Training
     for curr_round in range(start_round, cfg.num_rounds):
-        logger.info(f"-------- Round: {curr_round} --------\n")
-        
+        # logger.info(f"-------- Round: {curr_round} --------\n")
+        logger.info(f"\n-------- Round: {curr_round} --------\n")
+
         loop_start = time.time()
 
         metrics["round"] = curr_round
@@ -237,7 +237,6 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
         for cid in train_ids:
             train_results[cid] = clients[cid].train(curr_round)
 
-
         for epoch in range(cfg.train.epochs):
             for cid in train_ids:
                 result = train_results[cid][epoch]
@@ -247,16 +246,18 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
             for metric in ["loss", "accuracy"]:
                 m_list = list(metrics[metric]["train"].values())
                 metrics[metric]["train"]["mean"] = sum(m_list) / len(m_list)
-                logger.info(f"CLIENT TRAIN mean {metric}: {metrics[metric]['train']['mean']}")
+                # logger.info(f"CLIENT TRAIN mean {metric}: {metrics[metric]['train']['mean']}")
+                logger.info(
+                    f"CLIENT TRAIN mean {metric}: {metrics[metric]['train']['mean']}"
+                )
 
             metrics["total_epochs"] = total_epochs
             total_epochs += 1
-            if USE_WANDB: 
+            if USE_WANDB:
                 flat = json_normalize(metrics, sep="/").to_dict(orient="records")[0]
                 wandb.log(flat, step=step_count, commit=False)
                 step_count += 1
 
-        
         ### CLIENTS EVALUATE local performance before aggregation ###
         for cid in train_ids:
             eval_result = clients[cid].evaluate()
@@ -266,9 +267,12 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
         for metric in ["loss", "accuracy"]:
             m_list = list(metrics[metric]["eval"].values())
             metrics[metric]["eval"]["mean"] = sum(m_list) / len(m_list)
-            logger.info(f"CLIENT EVAL mean {metric}: {metrics[metric]['eval']['mean']}")
+            # logger.info(f"CLIENT EVAL mean {metric}: {metrics[metric]['eval']['mean']}")
+            logger.info(
+                f"CLIENT EVAL mean {metric}: {metrics[metric]['eval']['mean']}"
+            )
 
-        metrics["phase"]=phase_count
+        metrics["phase"] = phase_count
         phase_count += 1
         if USE_WANDB:
             flat = json_normalize(metrics, sep="/").to_dict(orient="records")[0]
@@ -308,7 +312,9 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
         for metric in ["loss", "accuracy"]:
             m_list = list(metrics[metric]["eval"].values())
             metrics[metric]["eval"]["mean"] = sum(m_list) / len(m_list)
-            logger.info(f"CLIENT EVAL post mean {metric}: {metrics[metric]['eval']['mean']}")
+            logger.info(
+                f"CLIENT EVAL post mean {metric}: {metrics[metric]['eval']['mean']}"
+            )
 
         # SERVER EVALUATE
         server_result = simple_evaluator(global_model, server_loader, cfg.train)
@@ -319,6 +325,7 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
         metrics["phase"] = phase_count
         phase_count += 1
 
+        # logger.info(f"SERVER EVAL: {server_result}")
         logger.info(f"SERVER EVAL: {server_result}")
         if USE_WANDB:
             flat = json_normalize(metrics, sep="/").to_dict(orient="records")[0]
@@ -328,10 +335,11 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
         if curr_round % cfg.checkpoint_every == 0:
             save_checkpoint(curr_round, global_model, server_optimizer, "server")
 
-
         loop_end = time.time() - loop_start
+        # logger.info(
+        #     f"------------ Round {curr_round} completed in time: {loop_end} ------------"
+        # )
         logger.info(
             f"------------ Round {curr_round} completed in time: {loop_end} ------------"
         )
-
     torch.save(global_model.state_dict(), f"final_model.pt")

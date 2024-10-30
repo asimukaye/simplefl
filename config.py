@@ -188,6 +188,7 @@ def compile_config(strategy: str, load_from_dir="") -> Config:
         print("Resuming from: ", load_from_dir)
 
     print("Strategy: ", strategy)
+    print("\n")
 
     match strategy:
         case "fedavg":
@@ -198,7 +199,7 @@ def compile_config(strategy: str, load_from_dir="") -> Config:
                     desc="FedAvg on CIFAR10",
                     model="rffl_cnn",
                     num_clients=6,
-                    num_rounds=500,
+                    num_rounds=3,
                     seed=SEED,
                     train=TrainConfig(
                         epochs=1,
@@ -217,8 +218,8 @@ def compile_config(strategy: str, load_from_dir="") -> Config:
                     dataset=DatasetConfig(
                         name="fast_cifar10",
                         seed=SEED,
-                        subsample_fraction=1.0,
-                        
+                        subsample_fraction=0.2,
+
                     ),
                 )
                 cfg.split.num_splits = cfg.num_clients
