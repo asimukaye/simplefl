@@ -76,7 +76,6 @@ LOSS_MAP = {
 
 SEED = 42
 DATA_PATH = "data"
-USE_WANDB = True
 
 
 @dataclass
@@ -112,15 +111,20 @@ class TrainConfig:
 
 @dataclass
 class SplitConfig:
-    name: str = "iid"
+    name: str = "none"
     num_splits: int = 0  # should be equal to num_clients
     # Train test split ratio within the client,
     # Now this is auto determined by the test set size
     # test_fractions: list[float] = field(init=False, default_factory=list)
 
 
+IIDSplitConfig = SplitConfig
+IIDSplitConfig.name = "iid"
+
+
 @dataclass
 class NoisyImageSplitConfig(SplitConfig):
+    name = "noisy_image"
     num_noisy_clients: int = 1
     noise_mu: float = 0.0
     noise_sigma: float = 0.1
@@ -128,22 +132,26 @@ class NoisyImageSplitConfig(SplitConfig):
 
 @dataclass
 class NoisyLabelSplitConfig(SplitConfig):
+    name = "noisy_label"
     num_noisy_clients: int = 1
     noise_flip_percent: float = 0.1
 
 
 @dataclass
 class PathoSplitConfig(SplitConfig):
+    name: str = "patho"
     num_class_per_client: int = 2
 
 
 @dataclass
 class DirichletSplitConfig(SplitConfig):
+    name: str = "dirichlet"
     alpha: float = 1.0  # concentration parameter
 
 
 @dataclass
 class DataImbalanceSplitConfig(SplitConfig):
+    name: str = "data_imbalance"
     num_imbalanced_clients: int = 1
 
 
@@ -170,7 +178,12 @@ class Config:
     train_fraction: float = 1.0
     eval_fraction: float = 1.0
     seed: int = SEED
-    checkpoint_every: int = 10
+    checkpoint_every: int = 20
+
+    def __post_init__(self):
+        ## Define internal config variables here
+        self.use_wandb = True
+        self.split.num_splits = self.num_clients
 
 
 @dataclass
@@ -180,22 +193,28 @@ class CGSVConfig(Config):
     gamma: float = 0.25
 
 
+@dataclass
+class FHGConfig(Config):
+    name: str = "fedhigrad"
+    branches: list[int] = field(default_factory=lambda: [1, 2, 3])
+
+
 CONFIG_MAP = {
     "fedavg": Config,
     "cgsv": CGSVConfig,
     "rffl": Config,
+    "fedhigrad": FHGConfig,
 }
 
 
 def set_debug_config(cfg: Config) -> Config:
-    global USE_WANDB
-    USE_WANDB = False
+    cfg.use_wandb = False
 
     cfg.dataset.subsample_fraction = 0.05
     cfg.train.epochs = 1
     cfg.num_rounds = 3
-    cfg.num_clients = 6
     return cfg
+
 
 def get_default_config(strategy: str) -> Config:
     return Config(
@@ -205,6 +224,34 @@ def get_default_config(strategy: str) -> Config:
 
 def get_fedavg_config() -> Config:
     cfg = Config(
+        desc="FedAvg on CIFAR10, Dirichle split 0.01",
+        model="rffl_cnn",
+        num_clients=6,
+        num_rounds=500,
+        seed=SEED,
+        train=TrainConfig(
+            epochs=1,
+            lr=0.01,
+            batch_size=128,
+            eval_batch_size=128,
+            device="auto",
+            optimizer="sgd",
+            loss_name="crossentropy",
+            scheduler="exponential",
+            lr_decay=0.977,
+        ),
+        split=DirichletSplitConfig(alpha=0.01),
+        # split=IIDSplitConfig(),
+        dataset=DatasetConfig(
+            name="fast_cifar10",
+            subsample_fraction=1.0,
+        ),
+    )
+    return cfg
+
+
+def get_fedhigrad_config() -> FHGConfig:
+    cfg = FHGConfig(
         desc="FedAvg on CIFAR10, Dirichlet split, alpha=0.1",
         model="rffl_cnn",
         num_clients=6,
@@ -221,7 +268,7 @@ def get_fedavg_config() -> Config:
             scheduler="exponential",
             lr_decay=0.977,
         ),
-        split=DirichletSplitConfig(name="dirichlet", alpha=0.1),
+        split=DirichletSplitConfig(name="dirichlet", alpha=1.0),
         dataset=DatasetConfig(
             name="fast_cifar10",
             seed=SEED,
@@ -249,7 +296,10 @@ def compile_config(strategy: str) -> Config:
     match strategy:
         case "fedavg":
             cfg = get_fedavg_config()
-            cfg.split.num_splits = cfg.num_clients
-            return cfg
+            # cfg.split.num_splits = cfg.num_clients
+            # return cfg
+        case "fedhigrad":
+            cfg = get_fedhigrad_config()
         case _:
             raise NotImplementedError
+    return cfg

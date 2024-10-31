@@ -16,7 +16,7 @@ from torch.nn import Module
 from torch.backends import cudnn, mps
 from torch.utils.data import Dataset
 
-from config import compile_config, load_config, USE_WANDB
+from config import compile_config, load_config, set_debug_config
 from data import load_raw_dataset
 from model import init_model
 from icecream import install, ic
@@ -55,15 +55,13 @@ def setup_output_dirs(suffix="debug"):
     os.chdir(output_dir)
 
 
-def setup_logging():
+def setup_logging(level=logging.INFO):
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
+    root_logger.setLevel(level)
     root_logger.handlers.clear()
 
-    # child_logger = logging.getLogger(__name__)
-
     stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setLevel(logging.INFO)
+    stream_handler.setLevel(level)
     formatter = logging.Formatter("%(name)s - %(levelname)s - %(message)s")
     verbose_formatter = logging.Formatter(
         "%(relativeCreated)d - %(name)s - %(levelname)s - %(message)s"
@@ -73,7 +71,7 @@ def setup_logging():
 
     file_handler = logging.FileHandler("log.txt")
     file_handler.mode = "a"
-    file_handler.setLevel(logging.INFO)
+    file_handler.setLevel(level)
     file_handler.setFormatter(verbose_formatter)
     root_logger.addHandler(file_handler)
 
@@ -85,6 +83,7 @@ if __name__ == "__main__":
     parser.add_argument("-s", "--strategy", type=str, default="fedavg")
     parser.add_argument("-r", "--resume_from", type=str, default="")
     parser.add_argument("-d", "--debug", action="store_true")
+    parser.add_argument("--rounds", default=0)
 
     args = parser.parse_args()
 
@@ -94,6 +93,14 @@ if __name__ == "__main__":
         cfg = load_config(args.resume_from)
     else:
         cfg = compile_config(args.strategy)
+
+    if args.debug:
+        print("_____DEBUG MODE______\n")
+        cfg = set_debug_config(cfg)
+
+    if args.rounds > cfg.num_rounds:
+        print("Overriding rounds")
+        cfg.num_rounds = args.rounds
 
     print(yaml.dump(asdict(cfg)))
     input("Press Enter to continue...")
@@ -112,15 +119,22 @@ if __name__ == "__main__":
         wandb_resume_mode = "must"
     else:
         resumed = False
-        setup_output_dirs(args.strategy)
+        if args.debug:
+            setup_output_dirs("debug")
+        else:
+            setup_output_dirs(args.strategy)
         run_id = None
         wandb_resume_mode = True
         with open("config.yaml", "w") as f:
             yaml.dump(asdict(cfg), f)
 
-    setup_logging()
+    if args.debug:
+        setup_logging(level=logging.DEBUG)
+    else:
+        setup_logging(level=logging.INFO)
+    print(cfg.use_wandb)
 
-    if USE_WANDB:
+    if cfg.use_wandb:
         run = wandb.init(
             project="simplefl",
             job_type=args.strategy,

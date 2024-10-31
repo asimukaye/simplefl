@@ -33,5 +33,6 @@ def save_as_csv(_round , result_dict: dict, filename="results.csv"):
 
 
 
-def log_to_wandb(metrics: dict, commit=False):
-    flat = pd.json_normalize(metrics, sep="/").to_dict(orient="records")[0]
+# def log_to_wandb(metrics: dict, metric:str, stage: str ="", actor: str = "" commit=False):
+
+#     flat = pd.json_normalize(metrics, sep="/").to_dict(orient="records")[0]

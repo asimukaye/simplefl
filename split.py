@@ -181,7 +181,10 @@ def get_client_datasets(
             )
         case _:
             pass
-    logger.debug(f"[DATA_SPLIT] Created client datasets!")
+
+    logger.debug(f"Split sizes: {[len(pair.train) for pair in client_datasets]}")
+    
+    logger.debug(f"Created client datasets!")
     # logger.debug(f"[DATA_SPLIT] Split fractions: {cfg.test_fractions}")
     return client_datasets
 

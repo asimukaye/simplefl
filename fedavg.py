@@ -9,7 +9,6 @@ from torch.utils.data import DataLoader, Subset
 from torch.nn import Module
 from torch.optim import Optimizer
 from tqdm import tqdm
-from logutils import log_to_wandb
 import wandb
 from utils import (
     generate_client_ids,
@@ -23,7 +22,7 @@ from utils import (
 )
 from data import DatasetPair
 from split import get_client_datasets
-from config import TrainConfig, Config, USE_WANDB
+from config import TrainConfig, Config
 
 
 # from sklearn.metrics import accuracy_score
@@ -202,9 +201,11 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
     server_scheduler = cfg.train.scheduler_partial(server_optimizer)
 
     # Fedavg weights
-    data_sizes = [len(clients[cid].dataset.train) for cid in client_ids]
+    data_sizes = [clients[cid].data_size for cid in client_ids]
     total_size = sum(data_sizes)
     weights = {cid: size / total_size for cid, size in zip(client_ids, data_sizes)}
+
+    logger.info(f"Client data sizes: {data_sizes}")
 
     # Define relevant x axes for logging
 
@@ -213,8 +214,8 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
     phase_count = 0
     # Define metrics to log
     metrics = {
-        "loss": {"train": {}, "eval": {}},
-        "accuracy": {"train": {}, "eval": {}},
+        "loss": {"train": {}, "eval": {}, "eval_pre": {}, "eval_post": {}},
+        "accuracy": {"train": {}, "eval": {}, "eval_pre": {}, "eval_post": {}},
         "round": 0,
         "weights": weights,
         "total_epochs": total_epochs,
@@ -240,41 +241,43 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
         for epoch in range(cfg.train.epochs):
             for cid in train_ids:
                 result = train_results[cid][epoch]
+
                 metrics["loss"]["train"][cid] = result["loss"]
                 metrics["accuracy"]["train"][cid] = result["accuracy"]
 
             for metric in ["loss", "accuracy"]:
                 m_list = list(metrics[metric]["train"].values())
                 metrics[metric]["train"]["mean"] = sum(m_list) / len(m_list)
-                # logger.info(f"CLIENT TRAIN mean {metric}: {metrics[metric]['train']['mean']}")
                 logger.info(
                     f"CLIENT TRAIN mean {metric}: {metrics[metric]['train']['mean']}"
                 )
 
             metrics["total_epochs"] = total_epochs
             total_epochs += 1
-            if USE_WANDB:
+            if cfg.use_wandb:
                 flat = json_normalize(metrics, sep="/").to_dict(orient="records")[0]
                 wandb.log(flat, step=step_count, commit=False)
                 step_count += 1
 
         ### CLIENTS EVALUATE local performance before aggregation ###
         for cid in train_ids:
-            eval_result = clients[cid].evaluate()
-            metrics["loss"]["eval"][cid] = eval_result["loss"]
-            metrics["accuracy"]["eval"][cid] = eval_result["accuracy"]
+            eval_result_pre = clients[cid].evaluate()
+            metrics["loss"]["eval"][cid] = eval_result_pre["loss"]
+            metrics["loss"]["eval_pre"][cid] = eval_result_pre["loss"]
+            metrics["accuracy"]["eval"][cid] = eval_result_pre["accuracy"]
+            metrics["accuracy"]["eval_pre"][cid] = eval_result_pre["accuracy"]
 
         for metric in ["loss", "accuracy"]:
             m_list = list(metrics[metric]["eval"].values())
-            metrics[metric]["eval"]["mean"] = sum(m_list) / len(m_list)
-            # logger.info(f"CLIENT EVAL mean {metric}: {metrics[metric]['eval']['mean']}")
-            logger.info(
-                f"CLIENT EVAL mean {metric}: {metrics[metric]['eval']['mean']}"
-            )
+            mean = sum(m_list) / len(m_list)
+            metrics[metric]["eval"]["mean"] = mean
+            metrics[metric]["eval_pre"]["mean"] = mean
+            logger.info(f"CLIENT EVAL mean {metric}: {mean}")
 
         metrics["phase"] = phase_count
         phase_count += 1
-        if USE_WANDB:
+
+        if cfg.use_wandb:
             flat = json_normalize(metrics, sep="/").to_dict(orient="records")[0]
             wandb.log(flat, step=step_count, commit=False)
             step_count += 1
@@ -292,8 +295,8 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
                 temp_parameter.data.add_(weights[cid] * params[key].data)
             param.data = temp_parameter
 
-        server_optimizer.step()
-        server_scheduler.step()
+        # server_optimizer.step()
+        # server_scheduler.step()
 
         ### send the global model to all clients
         for cid, client in clients.items():
@@ -305,13 +308,16 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
         ### CLIENTS EVALUATE post aggregation###
         eval_ids = client_ids
         for cid in eval_ids:
-            eval_result = clients[cid].evaluate()
-            metrics["loss"]["eval"][cid] = eval_result["loss"]
-            metrics["accuracy"]["eval"][cid] = eval_result["accuracy"]
+            eval_result_post = clients[cid].evaluate()
+            metrics["loss"]["eval"][cid] = eval_result_post["loss"]
+            metrics["loss"]["eval_post"][cid] = eval_result_post["loss"]
+            metrics["accuracy"]["eval"][cid] = eval_result_post["accuracy"]
+            metrics["accuracy"]["eval_post"][cid] = eval_result_post["accuracy"]
 
         for metric in ["loss", "accuracy"]:
             m_list = list(metrics[metric]["eval"].values())
             metrics[metric]["eval"]["mean"] = sum(m_list) / len(m_list)
+            metrics[metric]["eval_post"]["mean"] = sum(m_list) / len(m_list)
             logger.info(
                 f"CLIENT EVAL post mean {metric}: {metrics[metric]['eval']['mean']}"
             )
@@ -321,13 +327,12 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
 
         metrics["loss"]["eval"]["server"] = server_result["loss"]
         metrics["accuracy"]["eval"]["server"] = server_result["accuracy"]
-        # metrics["round"] = curr_round
         metrics["phase"] = phase_count
+
         phase_count += 1
 
-        # logger.info(f"SERVER EVAL: {server_result}")
         logger.info(f"SERVER EVAL: {server_result}")
-        if USE_WANDB:
+        if cfg.use_wandb:
             flat = json_normalize(metrics, sep="/").to_dict(orient="records")[0]
             wandb.log(flat, step=step_count, commit=True)
             step_count += 1
@@ -336,9 +341,9 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
             save_checkpoint(curr_round, global_model, server_optimizer, "server")
 
         loop_end = time.time() - loop_start
-        # logger.info(
-        #     f"------------ Round {curr_round} completed in time: {loop_end} ------------"
-        # )
+
+        # ic("Post", metrics["accuracy"]["eval"]["mean"], metrics["phase"])
+
         logger.info(
             f"------------ Round {curr_round} completed in time: {loop_end} ------------\n"
         )

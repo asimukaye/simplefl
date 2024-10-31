@@ -1,6 +1,8 @@
-from fedora.utils import log_tqdm
+import random
+from tqdm import tqdm
 import numpy as np
 from torch.utils.data import Subset, Dataset
+
 import logging
 
 logger = logging.getLogger(__name__)
@@ -49,7 +51,7 @@ def dirichlet_noniid_split(
     Returns:
         client_idcs: a list containing sample idcs of clients.
     """
-    target_set = Subset(dataset.dataset.targets, dataset.indices)
+    target_set = Subset(dataset.dataset.targets, dataset.indices) # type: ignore
     train_labels = np.array(target_set)
     # train_labels = np.array(train_labels)
     n_classes = train_labels.max() + 1
@@ -57,6 +59,7 @@ def dirichlet_noniid_split(
     # proportion of each label's data divided into each client
     label_distribution = np.random.dirichlet([alpha] * n_clients, n_classes)
 
+    # logger.debug(f"Label distribution: {label_distribution.shape}")
     # (n_classes, ...), indicating the sample indices for each label
     class_idcs = [np.argwhere(train_labels == y).flatten() for y in range(n_classes)]
 
@@ -66,14 +69,37 @@ def dirichlet_noniid_split(
         # `np.split` divides the sample indices of each class, i.e.`c_idcs`
         # into `n_clients` subsets according to the proportion `fracs`.
         # `i` indicates the i-th client, `idcs` indicates its sample indices
-        for i, idcs in enumerate(
-            np.split(c_idcs, (np.cumsum(fracs)[:-1] * len(c_idcs)).astype(int))
-        ):
+        # logger.debug(f"Fractions: {np.cumsum(fracs)}")
+
+        sections = (np.cumsum(fracs)[:-1] * len(c_idcs)).astype(int)
+        idx_splits = np.split(c_idcs, sections.astype(int))
+        for i, idcs in enumerate(idx_splits):
+            # logger.debug(f"Client {i} has {len(idcs)} samples")
             client_idcs[i] += [idcs]
 
-    client_idcs = {
-        k: np.concatenate(idcs) for k, idcs in zip(range(n_clients), client_idcs)
-    }
+    ## Allocate at least one sample to each client
+    ids_array = [np.concatenate(c) for c in client_idcs]
+    # Check if there are any empty arrays
+    zero_arrays = {i: a for i, a in enumerate(ids_array) if a.shape[0] == 0}
+
+    if len(zero_arrays) > 0:
+        large_arrays = [
+            (i, a) for i, a in enumerate(ids_array) if a.shape[0] > n_clients
+        ]
+        for zidx, zero_ar in zero_arrays.items():
+            ridx, random_large_array = random.choice(large_arrays)
+            # ic(random_large_array.shape)
+            random_idx = np.random.choice(random_large_array.shape[0], size=1)
+            # ic(random_large_array[random_idx])
+            ids_array[zidx] = np.append(zero_ar, random_large_array[random_idx])
+            # ic(ids_array[zidx].shape)
+            ids_array[ridx] = np.delete(random_large_array, random_idx)
+        # ic(ids_array[ridx].shape)
+
+    client_idcs = {k: idcs for k, idcs in zip(range(n_clients), ids_array)}
+    # client_idcs = {
+    #     k: np.concatenate(idcs) for k, idcs in zip(range(n_clients), client_idcs)
+    # }
 
     return client_idcs
 
@@ -88,7 +114,7 @@ def get_dirichlet_split_2(
 
     # get indices by class labels
     _, unique_inverse, unique_count = np.unique(
-        dataset.targets, return_inverse=True, return_counts=True
+        dataset.targets, return_inverse=True, return_counts=True # type: ignore
     )
     class_indices = np.split(np.argsort(unique_inverse), np.cumsum(unique_count[:-1]))
 
@@ -101,7 +127,7 @@ def get_dirichlet_split_2(
     )
 
     # calculate ideal samples counts per client
-    ideal_samples_counts = len(dataset.targets) // num_classes
+    ideal_samples_counts = len(dataset.targets) // num_classes # type: ignore
     if ideal_samples_counts < 1:
         err = f"[DATA_SPLIT] Decrease the number of participating clients (`args.K` < {num_splits})!"
         logger.exception(err)
@@ -109,9 +135,7 @@ def get_dirichlet_split_2(
 
     # assign divided shards to clients
     assigned_indices = []
-    for k in log_tqdm(
-        range(num_splits), logger=logger, desc="[DATA_SPLIT] assigning to clients "
-    ):
+    for k in tqdm(range(num_splits)):
         # update mask according to the count of reamining samples per class
         # i.e., do NOT sample from class having no remaining samples
         remaining_mask = np.where(
@@ -172,7 +196,7 @@ def dirichlet_noniid_split_fixed(
     n_clients: int,
     alpha: float,
 ) -> dict[int, np.ndarray]:
-    target_set = Subset(dataset.dataset.targets, dataset.indices)
+    target_set = Subset(dataset.dataset.targets, dataset.indices) # type: ignore
     train_labels = np.array(target_set)
 
     # train_labels = np.array(dataset.targets)
