@@ -1,6 +1,7 @@
 from copy import deepcopy
 import time
 import logging
+import math
 import random
 from pandas import json_normalize
 import torch
@@ -10,6 +11,9 @@ from torch.utils.data import DataLoader, Subset
 from torch.nn import Module
 from torch.optim import Optimizer
 from tqdm import tqdm
+from torch.linalg import norm
+import torch.nn.functional as F
+
 import wandb
 from utils import (
     generate_client_ids,
@@ -23,77 +27,125 @@ from utils import (
 )
 from data import DatasetPair
 from split import get_client_datasets
-from config import TrainConfig, Config
-
-
-# from sklearn.metrics import accuracy_score
+from config import TrainConfig, CGSVConfig
+from fedavg import simple_trainer, simple_evaluator
 
 logger = logging.getLogger(__name__)
 
 
-@torch.no_grad()
-def simple_evaluator(model: Module, dataloader: DataLoader, cfg: TrainConfig) -> dict:
-
-    model.eval()
-    model.to(cfg.device)
-
-    loss_list = []
-    outputs_list = []
-    targets_list = []
-    for inputs, targets in tqdm(dataloader):
-        # ic(inputs.shape, targets.shape)
-        inputs, targets = inputs.to(cfg.device), targets.to(cfg.device)
-        outputs = model(inputs)
-        loss: Tensor = cfg.loss_fn(outputs, targets)
-        loss_list.append(loss.data)
-        outputs_list.append(outputs)
-        targets_list.append(targets)
-
-    all_outputs = torch.cat(outputs_list, dim=0)
-    all_targets = torch.cat(targets_list, dim=0)
-    avg_loss = torch.mean(torch.stack(loss_list)).item()
-
-    return {"loss": avg_loss, "accuracy": get_accuracy(all_outputs, all_targets)}
+def compute_grad_update(old_model, new_model, device=None):
+    # maybe later to implement on selected layers/parameters
+    if device:
+        old_model, new_model = old_model.to(device), new_model.to(device)
+    return [
+        (new_param.data - old_param.data)
+        for old_param, new_param in zip(old_model.parameters(), new_model.parameters())
+    ]
 
 
-def simple_trainer(
-    model: Module, dataloader: DataLoader, cfg: TrainConfig, optimizer: Optimizer
-) -> dict:
+def add_gradient_updates(grad_update_1, grad_update_2, weight=1.0):
+    assert len(grad_update_1) == len(
+        grad_update_2
+    ), "Lengths of the two grad_updates not equal"
 
-    model.train()
-    # model.float()
-    model.to(cfg.device)
-
-    loss_list = []
-    outputs_list = []
-    targets_list = []
-    for inputs, targets in tqdm(dataloader):
-        optimizer.zero_grad()
-        inputs, targets = inputs.to(cfg.device), targets.to(cfg.device)
-        outputs = model(inputs)
-        loss: Tensor = cfg.loss_fn(outputs, targets)
-        loss.backward()
-        optimizer.step()
-
-        loss_list.append(loss.data)
-        outputs_list.append(outputs)
-        targets_list.append(targets)
-
-    all_outputs = torch.cat(outputs_list, dim=0)
-    all_targets = torch.cat(targets_list, dim=0)
-    avg_loss = torch.mean(torch.stack(loss_list)).item()
-
-    return {"loss": avg_loss, "accuracy": get_accuracy(all_outputs, all_targets)}
+    for param_1, param_2 in zip(grad_update_1, grad_update_2):
+        param_1.data += param_2.data * weight
 
 
-def random_client_selection(sampling_fraction: float, cids: list[str]):
+def add_update_to_model(model, update, weight=1.0, device=None):
+    if not update:
+        return model
+    if device:
+        model = model.to(device)
+        update = [param.to(device) for param in update]
 
-    num_clients = len(cids)
-    num_sampled_clients = max(int(sampling_fraction * num_clients), 1)
-    sampled_client_ids = sorted(random.sample(cids, num_sampled_clients))
+    for param_model, param_update in zip(model.parameters(), update):
+        param_model.data += weight * param_update.data
+    return model
 
-    return sampled_client_ids
 
+def compare_models(model1, model2):
+    for p1, p2 in zip(model1.parameters(), model2.parameters()):
+        if p1.data.ne(p2.data).sum() > 0:
+            return False  # two models have different weights
+    return True
+
+
+def sign(grad):
+    return [torch.sign(update) for update in grad]
+
+
+def flatten(grad_update):
+    return torch.cat([update.data.view(-1) for update in grad_update])
+
+
+def unflatten(flattened, normal_shape):
+    grad_update = []
+    for param in normal_shape:
+        n_params = len(param.view(-1))
+        grad_update.append(torch.as_tensor(flattened[:n_params]).reshape(param.size()))
+        flattened = flattened[n_params:]
+
+    return grad_update
+
+
+def l2norm(grad):
+    return torch.sqrt(torch.sum(torch.pow(flatten(grad), 2)))
+
+
+def cosine_similarity(grad1, grad2, normalized=False):
+    """
+    Input: two sets of gradients of the same shape
+    Output range: [-1, 1]
+    """
+
+    cos_sim = F.cosine_similarity(flatten(grad1), flatten(grad2), 0, 1e-10)
+    if normalized:
+        return (cos_sim + 1) / 2.0
+    else:
+        return
+
+def mask_grad_update_by_order(grad_update, mask_order=None, mask_percentile=None, mode='all'):
+
+    if mode == 'all':
+        # mask all but the largest <mask_order> updates (by magnitude) to zero
+        all_update_mod = torch.cat([update.data.view(-1).abs()
+                                    for update in grad_update])
+        if not mask_order and mask_percentile is not None:
+            mask_order = int(len(all_update_mod) * mask_percentile)
+        
+        if mask_order == 0:
+            return mask_grad_update_by_magnitude(grad_update, float('inf'))
+        else:
+            topk, indices = torch.topk(all_update_mod, mask_order) # type: ignore
+            return mask_grad_update_by_magnitude(grad_update, topk[-1])
+
+    elif mode == 'layer': # layer wise largest-values criterion
+        grad_update = deepcopy(grad_update)
+
+        mask_percentile = max(0, mask_percentile) # type: ignore
+        for i, layer in enumerate(grad_update):
+            layer_mod = layer.data.view(-1).abs()
+            if mask_percentile is not None:
+                mask_order = math.ceil(len(layer_mod) * mask_percentile)
+
+            if mask_order == 0:
+                grad_update[i].data = torch.zeros(layer.data.shape, device=layer.device)
+            else:
+                topk, indices = torch.topk(layer_mod, 
+                               min(mask_order, len(layer_mod)-1)) # type: ignore
+                grad_update[i].data[layer.data.abs() < topk[-1]] = 0
+        return grad_update
+
+def mask_grad_update_by_magnitude(grad_update, mask_constant):
+
+    # mask all but the updates with larger magnitude than <mask_constant> to zero
+    # print('Masking all gradient updates with magnitude smaller than ', mask_constant)
+    grad_update = deepcopy(grad_update)
+    for i, update in enumerate(grad_update):
+        grad_update[i].data[update.data.abs() < mask_constant] = 0
+    return grad_update
+    
 
 class Client:
     def __init__(
@@ -153,13 +205,12 @@ class Client:
         self.start_epoch = checkpoint["epoch"]
 
 
-def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
+def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig, resumed=False):
 
-    global_model = model
+    global_model = in_model
     global_model.to(cfg.train.device)
     global_model.eval()
     global_model.zero_grad()
-
 
     client_ids = generate_client_ids(cfg.num_clients)
 
@@ -173,7 +224,7 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
             train_cfg=cfg.train,
             cid=cid,
             dataset=dataset,
-            model=deepcopy(model),
+            model=deepcopy(in_model),
         )
 
     if resumed:
@@ -202,11 +253,18 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
     server_scheduler = cfg.train.scheduler_partial(server_optimizer)
 
     # Fedavg weights
-    data_sizes = [clients[cid].data_size for cid in client_ids]
-    total_size = sum(data_sizes)
-    weights = {cid: size / total_size for cid, size in zip(client_ids, data_sizes)}
+    shard_sizes = [clients[cid].data_size for cid in client_ids]
+    total_size = sum(shard_sizes)
+    shard_sizes = torch.tensor(shard_sizes).float()
+    relative_shard_sizes = torch.div(shard_sizes, torch.sum(shard_sizes))
+    weights_log = {cid: rel_size for cid, rel_size in zip(client_ids, relative_shard_sizes)}
+    D = sum([p.numel() for p in global_model.parameters()])
+    rs_list = []
+    rs = torch.zeros(cfg.num_clients, device=cfg.train.device)
+    past_phis = []
+    qs_list = []
 
-    logger.info(f"Client data sizes: {data_sizes}")
+    logger.info(f"Client data sizes: {shard_sizes}")
 
     # Define relevant x axes for logging
 
@@ -219,7 +277,10 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
         "loss": {"train": {}, "eval": {}, "eval_pre": {}, "eval_post": {}},
         "accuracy": {"train": {}, "eval": {}, "eval_pre": {}, "eval_post": {}},
         "round": 0,
-        "weights": weights,
+        "weights": weights_log,
+        "q_ratios": weights_log,
+        "rs": weights_log,
+        "phis": weights_log,
         "total_epochs": total_epochs,
         "phase": phase_count,
     }
@@ -231,13 +292,38 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
         loop_start = time.time()
 
         metrics["round"] = curr_round
+
+        gradients = []
+
         #### CLIENTS TRAIN ####
         # select all clients
         train_ids = client_ids
 
         train_results = {}
         for cid in train_ids:
+            client = clients[cid]
+            backup = deepcopy(client.model)
+
             train_results[cid] = clients[cid].train(curr_round)
+
+            gradient = compute_grad_update(
+                old_model=backup, new_model=client.model, device=cfg.train.device
+            )
+
+            flattened = flatten(gradient)
+            norm_value = norm(flattened) + 1e-7  # to prevent division by zero
+            if norm_value > cfg.gamma:
+                gradient = unflatten(
+                    torch.multiply(
+                        torch.tensor(cfg.gamma), torch.div(flattened, norm_value)
+                    ),
+                    gradient,
+                )
+
+                client.model.load_state_dict(backup.state_dict())
+                add_update_to_model(client.model, gradient, device=cfg.train.device)
+
+            gradients.append(gradient)
 
         for epoch in range(cfg.train.epochs):
             for cid in train_ids:
@@ -286,26 +372,81 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
 
         #### AGGREGATE ####
 
-        clients_params = {
-            cid: dict(client.model.named_parameters())
-            for cid, client in clients.items()
-        }
+        aggregated_gradient = [
+            torch.zeros(param.shape).to(cfg.train.device)
+            for param in global_model.parameters()
+        ]
 
-        for key, param in global_model.named_parameters():
-            temp_parameter = torch.zeros_like(param.data)
-            for cid, params in clients_params.items():
-                temp_parameter.data.add_(weights[cid] * params[key].data)
-            param.data = temp_parameter
+        if not cfg.use_reputation:
+            # fedavg
+            for gradient, weight in zip(gradients, relative_shard_sizes):
+                add_gradient_updates(aggregated_gradient, gradient, weight=weight.item())
+
+        else:
+            if curr_round == 0:
+                weights = torch.div(shard_sizes, torch.sum(shard_sizes))
+            else:
+                weights = rs
+
+            for gradient, weight in zip(gradients, weights):
+                add_gradient_updates(aggregated_gradient, gradient, weight=weight.item())
+
+
+            flat_aggre_grad = flatten(aggregated_gradient)
+
+            phis = torch.zeros(cfg.num_clients, device=cfg.train.device)
+            for i, gradient in enumerate(gradients):
+                phis[i] = F.cosine_similarity(
+                    flatten(gradient), flat_aggre_grad, 0, 1e-10
+                )
+
+            past_phis.append(phis)
+
+            rs = cfg.alpha * rs + (1 - cfg.alpha) * phis
+            rs = torch.div(rs, rs.sum())
+
+            # r_threshold.append(threshold * (1.0 / len(R_set)))
+            q_ratios = torch.div(rs, torch.max(rs))
+
+            rs_list.append(rs)
+            qs_list.append(q_ratios)
+
+        #THIS LINE WAS MISSING IN RFFL
+        # update the global model
+        add_update_to_model(global_model, aggregated_gradient, device=cfg.train.device)
+
+        for i, cid in enumerate(client_ids):
+
+            if cfg.use_sparsify and cfg.use_reputation:
+
+                q_ratio = q_ratios[i]
+                reward_gradient = mask_grad_update_by_order(
+                    aggregated_gradient, mask_percentile=q_ratio, mode="layer"
+                )
+
+            elif cfg.use_sparsify and not cfg.use_reputation:
+
+                # relative_shard_sizes[i] the relative dataset weight of the local dataset
+                reward_gradient = mask_grad_update_by_order(
+                    aggregated_gradient,
+                    mask_percentile=relative_shard_sizes[i],
+                    mode="layer",
+                )
+
+            else:  # not use_sparsify
+                # the reward_gradient is the whole gradient
+                reward_gradient = aggregated_gradient
+
+            add_update_to_model(clients[cid].model, reward_gradient)
+
+            metrics["q_ratios"][cid] = q_ratios[i].item()
+            metrics["weights"][cid] = weights[i].item()
+            metrics["phis"][cid] = phis[i].item()
+            metrics["rs"][cid] = rs[i].item()
+
 
         # server_optimizer.step()
         # server_scheduler.step()
-
-        ### send the global model to all clients
-        for cid, client in clients.items():
-            for cparam, gparam in zip(
-                client.model.parameters(), global_model.parameters()
-            ):
-                cparam.data.copy_(gparam.data)
 
         ### CLIENTS EVALUATE post aggregation###
         eval_ids = client_ids

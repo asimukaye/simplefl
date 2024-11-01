@@ -44,7 +44,7 @@ def get_split_map(cfg: SplitConfig, dataset: Subset) -> dict[int, np.ndarray]:
         split_map (dict): dictionary with key is a client index and a corresponding value is a list of indices
     """
     match cfg.name:
-        case "iid" | "noisyimage" | "noisylabel":
+        case "iid" | "noisy_image" | "noisy_label":
             split_map = get_iid_split(dataset, cfg.num_splits)
             return split_map
 
@@ -95,7 +95,7 @@ def add_image_noise_to_datasets(
         ), "Number of noise means should match number of patho clients"
         noise_mu_list = cfg.noise_mu
     else:
-        noise_sigma_list = [cfg.noise_mu for _ in range(cfg.num_splits)]
+        noise_mu_list = [cfg.noise_mu for _ in range(cfg.num_splits)]
 
     if isinstance(cfg.noise_sigma, list):
         assert (
@@ -111,10 +111,10 @@ def add_image_noise_to_datasets(
             client_set.train, noise_mu_list[idx], noise_sigma_list[idx]
         )
         if match_train_distribution:
-            test = NoisySubset(
+            client_set.test = NoisySubset(
                 client_set.test, noise_mu_list[idx], noise_sigma_list[idx]
             )
-        client_datasets[idx] = DatasetPair(patho_train, test)
+        client_datasets[idx] = DatasetPair(patho_train, client_set.test)
     return client_datasets
 
 
@@ -134,8 +134,8 @@ def add_label_noise_to_datasets(
         client_set = client_datasets[idx]
         patho_train = LabelNoiseSubset(client_set.train, noise_list[idx])
         if match_train_distribution:
-            test = LabelNoiseSubset(client_set.test, noise_list[idx])
-        client_datasets[idx] = DatasetPair(patho_train, test)
+            client_set.test = LabelNoiseSubset(client_set.test, noise_list[idx])
+        client_datasets[idx] = DatasetPair(patho_train, client_set.test)
 
     return client_datasets
 
@@ -169,12 +169,12 @@ def get_client_datasets(
         client_datasets.append(DatasetPair(train_set, test_set))
 
     match cfg.name:
-        case "noisyimage":
+        case "noisy_image":
             assert isinstance(cfg, NoisyImageSplitConfig), "Invalid config type"
             client_datasets = add_image_noise_to_datasets(
                 client_datasets, cfg, match_train_distribution
             )
-        case "noisylabel":
+        case "noisy_label":
             assert isinstance(cfg, NoisyLabelSplitConfig), "Invalid config type"
             client_datasets = add_label_noise_to_datasets(
                 client_datasets, cfg, match_train_distribution

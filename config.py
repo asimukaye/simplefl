@@ -111,20 +111,20 @@ class TrainConfig:
 
 @dataclass
 class SplitConfig:
-    name: str = "none"
+    name: str 
     num_splits: int = 0  # should be equal to num_clients
     # Train test split ratio within the client,
     # Now this is auto determined by the test set size
     # test_fractions: list[float] = field(init=False, default_factory=list)
 
 
-IIDSplitConfig = SplitConfig
-IIDSplitConfig.name = "iid"
+# IIDSplitConfig = SplitConfig
+# IIDSplitConfig.name = "iid"
 
 
 @dataclass
 class NoisyImageSplitConfig(SplitConfig):
-    name = "noisy_image"
+    name: str = "noisy_image"
     num_noisy_clients: int = 1
     noise_mu: float = 0.0
     noise_sigma: float = 0.1
@@ -132,7 +132,7 @@ class NoisyImageSplitConfig(SplitConfig):
 
 @dataclass
 class NoisyLabelSplitConfig(SplitConfig):
-    name = "noisy_label"
+    name: str = "noisy_label"
     num_noisy_clients: int = 1
     noise_flip_percent: float = 0.1
 
@@ -172,7 +172,7 @@ class Config:
     split: SplitConfig
     model: str = "rffl_cnn"
     desc: str = ""
-    name: str = "fedavg"
+    name: str = ""
     num_clients: int = 6
     num_rounds: int = 200
     train_fraction: float = 1.0
@@ -190,7 +190,10 @@ class Config:
 class CGSVConfig(Config):
     beta: float = 1.0
     alpha: float = 0.95
-    gamma: float = 0.25
+    gamma: float = 0.15
+    use_reputation: bool = True
+    use_sparsify: bool = True 
+
 
 
 @dataclass
@@ -211,6 +214,7 @@ def set_debug_config(cfg: Config) -> Config:
     cfg.use_wandb = False
 
     cfg.dataset.subsample_fraction = 0.05
+    # cfg.dataset.subsample_fraction = 1.0
     cfg.train.epochs = 1
     cfg.num_rounds = 3
     return cfg
@@ -218,13 +222,14 @@ def set_debug_config(cfg: Config) -> Config:
 
 def get_default_config(strategy: str) -> Config:
     return Config(
-        TrainConfig(), DatasetConfig(), SplitConfig(), model="rffl_cnn", name=strategy
+        TrainConfig(), DatasetConfig(), SplitConfig(name='iid'), model="rffl_cnn", name=strategy
     )
 
 
 def get_fedavg_config() -> Config:
     cfg = Config(
-        desc="FedAvg on CIFAR10, Dirichle split 0.01",
+        name="fedavg",
+        desc="FedAvg on CIFAR10, Noisy Image split 3 Noise, mu=0.0, sigma=3.0",
         model="rffl_cnn",
         num_clients=6,
         num_rounds=500,
@@ -234,14 +239,16 @@ def get_fedavg_config() -> Config:
             lr=0.01,
             batch_size=128,
             eval_batch_size=128,
-            device="auto",
+            # device="auto",
+            device="cuda:3",
             optimizer="sgd",
             loss_name="crossentropy",
             scheduler="exponential",
             lr_decay=0.977,
         ),
-        split=DirichletSplitConfig(alpha=0.01),
-        # split=IIDSplitConfig(),
+        # split=DirichletSplitConfig(alpha=0.01),
+        split=NoisyImageSplitConfig(num_noisy_clients=3, noise_mu=0.0, noise_sigma=3.0),
+        # split=SplitConfig(name="iid"),
         dataset=DatasetConfig(
             name="fast_cifar10",
             subsample_fraction=1.0,
@@ -249,9 +256,44 @@ def get_fedavg_config() -> Config:
     )
     return cfg
 
+def get_cgsv_config() -> CGSVConfig:
+    cfg = CGSVConfig(
+        name="cgsv",
+        desc="CGSV on CIFAR10, IID split, sparsify",
+        model="rffl_cnn",
+        num_clients=6,
+        num_rounds=500,
+        alpha=0.95,
+        beta=1.0,
+        gamma=0.15,
+        use_sparsify=True,
+        seed=SEED,
+        train=TrainConfig(
+            epochs=1,
+            lr=0.01,
+            batch_size=128,
+            eval_batch_size=128,
+            device="auto",
+            # device="cuda:3",
+            optimizer="sgd",
+            loss_name="crossentropy",
+            scheduler="exponential",
+            lr_decay=0.977,
+        ),
+        # split=DirichletSplitConfig(alpha=0.01),
+        split=NoisyImageSplitConfig(num_noisy_clients=3, noise_mu=0.0, noise_sigma=0.1),
+        # split=SplitConfig(name="iid"),
+        dataset=DatasetConfig(
+            name="fast_cifar10",
+            subsample_fraction=1.0,
+        ),
+    )
+    cfg.desc = f"CGSV on CIFAR10, Noisy Image split {cfg.split.num_noisy_clients} Noise, mu=0.0, sigma=1.0"
+    return cfg
 
 def get_fedhigrad_config() -> FHGConfig:
     cfg = FHGConfig(
+        name="fedhigrad",
         desc="FedAvg on CIFAR10, Dirichlet split, alpha=0.1",
         model="rffl_cnn",
         num_clients=6,
@@ -298,6 +340,8 @@ def compile_config(strategy: str) -> Config:
             cfg = get_fedavg_config()
             # cfg.split.num_splits = cfg.num_clients
             # return cfg
+        case "cgsv":
+            cfg = get_cgsv_config()
         case "fedhigrad":
             cfg = get_fedhigrad_config()
         case _:

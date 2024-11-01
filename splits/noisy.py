@@ -1,4 +1,5 @@
 import torch
+from torch import Tensor
 from torch.utils.data import Subset, Dataset
 import numpy as np
 from typing import Sequence, Protocol
@@ -126,7 +127,8 @@ class AddGaussianNoise(object):
             self.mean, self.std
         )
 
-
+def add_gaussian_noise(tensor: Tensor, mean=0.0, std=1.0) -> Tensor:
+    return tensor + torch.randn(tensor.size()) * std + mean
 class NoisySubset(Subset):
     """Wrapper of `torch.utils.Subset` module for applying individual transform."""
 
@@ -134,12 +136,26 @@ class NoisySubset(Subset):
         # def __init__(self, subset: Subset,  mean:float, std: float):
         self.dataset = subset.dataset
         self.indices = subset.indices
-        self._subset = subset
-        self.noise = AddGaussianNoise(mean, std)
+        # self.noise = AddGaussianNoise(mean, std)
+        # self._subset = subset
+        self._subset = []
+        for idx in self.indices:
+            inputs, targets = self.dataset[idx]
+            self._subset.append((add_gaussian_noise(inputs, mean, std), targets))
+
+            # ic(inputs)
+            # inputs = self.noise(inputs)
+            # ic(inputs)
+            # self._subset = Subset(subset.dataset, subset.indices)
+            # self._subset = self.noise(subset)
+            # self._subset = self.noise(subset)
+        # self._subset = self.noise(subset)
+        
 
     def __getitem__(self, idx):
-        inputs, targets = self._subset[idx]
-        return self.noise(inputs), targets
+        # inputs, targets = self._subset[idx]
+        return self._subset[idx]
+        # return self.noise(inputs), targets
 
     def __len__(self):
         return len(self.indices)
