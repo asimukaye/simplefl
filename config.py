@@ -259,14 +259,14 @@ def get_fedavg_config() -> Config:
 def get_cgsv_config() -> CGSVConfig:
     cfg = CGSVConfig(
         name="cgsv",
-        desc="CGSV on CIFAR10, IID split, sparsify",
         model="rffl_cnn",
         num_clients=6,
         num_rounds=500,
         alpha=0.95,
         beta=1.0,
         gamma=0.15,
-        use_sparsify=True,
+        use_sparsify=False,
+        use_reputation=False,
         seed=SEED,
         train=TrainConfig(
             epochs=1,
@@ -281,14 +281,16 @@ def get_cgsv_config() -> CGSVConfig:
             lr_decay=0.977,
         ),
         # split=DirichletSplitConfig(alpha=0.01),
-        split=NoisyImageSplitConfig(num_noisy_clients=3, noise_mu=0.0, noise_sigma=0.1),
-        # split=SplitConfig(name="iid"),
+        # split=NoisyImageSplitConfig(num_noisy_clients=3, noise_mu=0.0, noise_sigma=0.1),
+        split=SplitConfig(name="iid"),
         dataset=DatasetConfig(
             name="fast_cifar10",
             subsample_fraction=1.0,
         ),
     )
-    cfg.desc = f"CGSV on CIFAR10, Noisy Image split {cfg.split.num_noisy_clients} Noise, mu=0.0, sigma=1.0"
+    # cfg.desc = f"CGSV on CIFAR10, Noisy Image split {cfg.split.num_noisy_clients} Noise, mu=0.0, sigma=1.0"
+    # cfg.desc = f"CGSV on CIFAR10, Dirichelet split, alpha sweep={cfg.split.alpha}"
+    cfg.desc = f"CGSV on CIFAR10 IID, sweep gama={cfg.gamma}"
     return cfg
 
 def get_fedhigrad_config() -> FHGConfig:

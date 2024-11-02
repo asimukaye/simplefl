@@ -11,6 +11,7 @@ import sys
 import numpy as np
 import torch
 import wandb
+from wandb.sdk.wandb_run import Run
 import yaml
 
 from torch.nn import Module
@@ -27,13 +28,28 @@ ic.configureOutput(includeContext=True)
 
 HOME_DIR = os.getcwd()
 # logger = logging.getLogger(__name__)
-def setattr_nested(base, path, value):
+def setattr_nested(base, path: str, value):
     """Accept a dotted path to a nested attribute to set."""
-    path, _, target = path.rpartition('.')
-    for attrname in path.split('.'):
+    splits = path.split('.')
+    intermediates = splits[:-1]
+    target = splits[-1]
+    for attrname in intermediates:
         base = getattr(base, attrname)
     setattr(base, target, value)
 
+def getattr_nested(base: t.Any, path: str) -> t.Any:
+    splits = path.split('.')
+    for attrname in splits:
+        base = getattr(base, attrname)
+    return base
+
+def hasattr_nested(base, path: str):
+    splits = path.split('.')
+    for attrname in splits:
+        if not hasattr(base, attrname):
+            return False
+        base = getattr(base, attrname)
+    return True
 
 def set_seed(seed):
     torch.manual_seed(seed)
@@ -127,6 +143,7 @@ def launch_experiment(strategy: str, cfg: Config, resume_from: str, debug: bool)
             notes=cfg.desc,
             id=run_id,
         )
+        assert isinstance(run, Run)
 
     match strategy:
         case "fedavg":
@@ -140,7 +157,9 @@ def launch_experiment(strategy: str, cfg: Config, resume_from: str, debug: bool)
             out = run_cgsv(dataset, model_instance, cfg, resumed)
         case _:
             raise NotImplementedError
-
+    
+    if cfg.use_wandb:
+        wandb.finish()
     os.chdir(HOME_DIR)
     end_time = time.time()
     logging.info(f"Total time taken: {end_time - start_time}")
@@ -153,6 +172,8 @@ if __name__ == "__main__":
     parser.add_argument("-d", "--debug", action="store_true")
     parser.add_argument("-p", "--sweep_param", type=str, default="")
     parser.add_argument("-v", "--sweep_values", nargs="+")
+    parser.add_argument("-p2", "--sweep_param2", type=str, default="")
+    parser.add_argument("-v2", "--sweep_values2", nargs="+")
     parser.add_argument("--rounds", default=0)
 
     args = parser.parse_args()
@@ -172,11 +193,13 @@ if __name__ == "__main__":
 
  
     if args.sweep_param:
-        # assert hasattr(cfg, args.sweep_param), f"{args.sweep_param} not in config"
-        val = attrgetter(args.sweep_param)(cfg)
-        # astype = type(getattr(cfg, args.sweep_param))
+        assert(len(args.sweep_values) > 0)
+        assert hasattr_nested(cfg, args.sweep_param), f"{args.sweep_param} not in config"
+        # val = attrgetter(args.sweep_param)(cfg)
+        val = getattr_nested(cfg, args.sweep_param)
         astype = type(val)
         sweep_values = [astype(x) for x in args.sweep_values]
+
         print("_____SWEEP MODE______\n")
 
         print(yaml.dump(asdict(cfg)))

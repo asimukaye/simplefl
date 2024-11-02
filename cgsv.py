@@ -8,13 +8,16 @@ import torch
 import numpy as np
 from torch import Tensor
 from torch.utils.data import DataLoader, Subset
+# from wandb.sdk.wandb_run import Run
+import wandb
+
 from torch.nn import Module
 from torch.optim import Optimizer
 from tqdm import tqdm
 from torch.linalg import norm
 import torch.nn.functional as F
 
-import wandb
+# import wandb
 from utils import (
     generate_client_ids,
     make_client_checkpoint_dirs,
@@ -411,6 +414,12 @@ def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig, resumed=Fa
             rs_list.append(rs)
             qs_list.append(q_ratios)
 
+            metrics["weights"][cid] = weights[i].item()
+            metrics["q_ratios"][cid] = q_ratios[i].item()
+            metrics["phis"][cid] = phis[i].item()
+            metrics["rs"][cid] = rs[i].item()
+
+
         #THIS LINE WAS MISSING IN RFFL
         # update the global model
         add_update_to_model(global_model, aggregated_gradient, device=cfg.train.device)
@@ -439,11 +448,7 @@ def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig, resumed=Fa
 
             add_update_to_model(clients[cid].model, reward_gradient)
 
-            metrics["q_ratios"][cid] = q_ratios[i].item()
-            metrics["weights"][cid] = weights[i].item()
-            metrics["phis"][cid] = phis[i].item()
-            metrics["rs"][cid] = rs[i].item()
-
+            
 
         # server_optimizer.step()
         # server_scheduler.step()

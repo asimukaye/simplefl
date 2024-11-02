@@ -11,6 +11,7 @@ from torch.nn import Module
 from torch.optim import Optimizer
 from tqdm import tqdm
 import wandb
+from wandb.sdk.wandb_run import Run
 from utils import (
     generate_client_ids,
     make_client_checkpoint_dirs,
