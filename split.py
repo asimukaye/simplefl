@@ -144,7 +144,7 @@ def get_client_datasets(
     cfg: SplitConfig,
     dataset: DatasetPair,
     match_train_distribution=False,
-) -> list:
+) -> list[DatasetPair]:
     # logger.info(f'[DATA_SPLIT] dataset split: `{cfg.split_type.upper()}`')
     split_map = get_split_map(cfg, dataset.train)
     if match_train_distribution:
@@ -189,13 +189,13 @@ def get_client_datasets(
     return client_datasets
 
 
-def pool_datasets(client_sets: list):
+def pool_datasets(client_sets: list[DatasetPair]):
     """Pools datasets from clients into a single dataset.
     Args:
         client_sets: list[fT.DatasetPair_t]
             List of client datasets
     """
-    pooled_train = ConcatDataset([pair[0] for pair in client_sets])
-    pooled_test = ConcatDataset([pair[1] for pair in client_sets])
+    pooled_train = ConcatDataset([pair.train for pair in client_sets])
+    pooled_test = ConcatDataset([pair.test for pair in client_sets])
 
-    return pooled_train, pooled_test
+    return DatasetPair(pooled_train, pooled_test) # type: ignore

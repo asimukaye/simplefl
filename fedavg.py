@@ -154,7 +154,7 @@ class Client:
         self.start_epoch = checkpoint["epoch"]
 
 
-def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
+def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config):
 
     global_model = model
     global_model.to(cfg.train.device)
@@ -177,7 +177,7 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config, resumed=False):
             model=deepcopy(model),
         )
 
-    if resumed:
+    if cfg.resumed:
         server_ckpt = find_server_checkpoint()
         start_round = load_server_checkpoint(server_ckpt, global_model)
         for cid, client in clients.items():

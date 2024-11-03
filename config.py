@@ -173,8 +173,8 @@ class Config:
     model: str = "rffl_cnn"
     desc: str = ""
     name: str = ""
-    num_clients: int = 6
-    num_rounds: int = 200
+    num_clients: int = -1
+    num_rounds: int = -1
     train_fraction: float = 1.0
     eval_fraction: float = 1.0
     seed: int = SEED
@@ -183,6 +183,7 @@ class Config:
     def __post_init__(self):
         ## Define internal config variables here
         self.use_wandb = True
+        self.resumed = False
         self.split.num_splits = self.num_clients
 
 
@@ -193,7 +194,6 @@ class CGSVConfig(Config):
     gamma: float = 0.15
     use_reputation: bool = True
     use_sparsify: bool = True 
-
 
 
 @dataclass
@@ -226,6 +226,36 @@ def get_default_config(strategy: str) -> Config:
     )
 
 
+def get_centralized_config() -> Config:
+    cfg = Config(
+        name="centralized",
+        model="rffl_cnn",
+        num_clients=6,
+        num_rounds=500,
+        seed=SEED,
+        train=TrainConfig(
+            epochs=1,
+            lr=0.01,
+            batch_size=128,
+            eval_batch_size=128,
+            device="auto",
+            optimizer="sgd",
+            loss_name="crossentropy",
+            scheduler="exponential",
+            lr_decay=0.977,
+        ),
+        # split=DirichletSplitConfig(alpha=0.01),
+        split=NoisyImageSplitConfig(num_noisy_clients=3, noise_mu=0.0, noise_sigma=3.0),
+        # split=SplitConfig(name="iid"),
+        dataset=DatasetConfig(
+            name="fast_cifar10",
+            subsample_fraction=1.0,
+        ),
+    )
+    cfg.desc = f"Centralized on CIFAR10, Noisy Image split {cfg.split.num_noisy_clients} Noise, mu=0.0, sigma={cfg.split.noise_sigma}"
+    # cfg.desc = f"Centralized on CIFAR10, IID Image split"
+    return cfg
+
 def get_fedavg_config() -> Config:
     cfg = Config(
         name="fedavg",
@@ -239,8 +269,7 @@ def get_fedavg_config() -> Config:
             lr=0.01,
             batch_size=128,
             eval_batch_size=128,
-            # device="auto",
-            device="cuda:3",
+            device="auto",
             optimizer="sgd",
             loss_name="crossentropy",
             scheduler="exponential",
@@ -274,7 +303,6 @@ def get_cgsv_config() -> CGSVConfig:
             batch_size=128,
             eval_batch_size=128,
             device="auto",
-            # device="cuda:3",
             optimizer="sgd",
             loss_name="crossentropy",
             scheduler="exponential",
@@ -346,6 +374,8 @@ def compile_config(strategy: str) -> Config:
             cfg = get_cgsv_config()
         case "fedhigrad":
             cfg = get_fedhigrad_config()
+        case "centralized":
+            cfg = get_centralized_config()
         case _:
             raise NotImplementedError
     return cfg

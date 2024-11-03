@@ -113,16 +113,14 @@ def launch_experiment(strategy: str, cfg: Config, resume_from: str, debug: bool)
     )
 
     if resume_from:
-        resumed = True
-        os.chdir(args.resume_from)
-        run_id = get_wandb_run_id(args.resume_from)
+        os.chdir(resume_from)
+        run_id = get_wandb_run_id(resume_from)
         wandb_resume_mode = "must"
     else:
-        resumed = False
         if debug:
             setup_output_dirs("debug")
         else:
-            setup_output_dirs(args.strategy)
+            setup_output_dirs(strategy)
         run_id = None
         wandb_resume_mode = True
         with open("config.yaml", "w") as f:
@@ -136,7 +134,7 @@ def launch_experiment(strategy: str, cfg: Config, resume_from: str, debug: bool)
     if cfg.use_wandb:
         run = wandb.init(
             project="simplefl",
-            job_type=args.strategy,
+            job_type=strategy,
             # tags=tags,
             config=asdict(cfg),
             resume=wandb_resume_mode,
@@ -149,12 +147,16 @@ def launch_experiment(strategy: str, cfg: Config, resume_from: str, debug: bool)
         case "fedavg":
             from fedavg import run_fedavg
 
-            out = run_fedavg(dataset, model_instance, cfg, resumed)
+            out = run_fedavg(dataset, model_instance, cfg)
         case "cgsv":
             from cgsv import run_cgsv
 
             assert isinstance(cfg, CGSVConfig)
-            out = run_cgsv(dataset, model_instance, cfg, resumed)
+            out = run_cgsv(dataset, model_instance, cfg)
+        case "centralized":
+            from centralized import run_centralized
+            assert isinstance(cfg, Config)
+            out = run_centralized(dataset, model_instance, cfg)
         case _:
             raise NotImplementedError
     
@@ -180,6 +182,7 @@ if __name__ == "__main__":
 
     if args.resume_from:
         cfg = load_config(args.resume_from)
+        cfg.resumed = True
         if args.rounds > cfg.num_rounds:
             print("Resuming from rounds")
             cfg.num_rounds = args.rounds
@@ -199,24 +202,45 @@ if __name__ == "__main__":
         val = getattr_nested(cfg, args.sweep_param)
         astype = type(val)
         sweep_values = [astype(x) for x in args.sweep_values]
-
         print("_____SWEEP MODE______\n")
 
-        print(yaml.dump(asdict(cfg)))
+        print(f"Sweeping over param: {args.sweep_param} with values:{sweep_values}")
 
-        print(f"Sweeping over: {args.sweep_param} with values:{sweep_values}")
+        if args.sweep_param2:
+            assert(len(args.sweep_values2) > 0)
+            assert hasattr_nested(cfg, args.sweep_param2), f"{args.sweep_param2} not in config"
+            val2 = getattr_nested(cfg, args.sweep_param2)
+            astype2 = type(val2)
+            sweep_values2 = [astype2(x) for x in args.sweep_values2]
 
-        input("Press Enter to continue...")
+            print(f"Sweeping over param2: {args.sweep_param2} with values:{sweep_values2}")
 
-        for sweep_value in sweep_values:
-            setattr_nested(cfg, args.sweep_param, sweep_value)
-            print(f"Running with {args.sweep_param}={sweep_value}")
-            launch_experiment(args.strategy, cfg, args.resume_from, args.debug)
+            print(yaml.dump(asdict(cfg)))
+
+            input("Press Enter to continue...")
+
+            for sweep_value in sweep_values:
+                setattr_nested(cfg, args.sweep_param, sweep_value)
+                for sweep_value2 in sweep_values2:
+                    setattr_nested(cfg, args.sweep_param2, sweep_value2)
+                    print(f"Running with {args.sweep_param}={sweep_value} and {args.sweep_param2}={sweep_value2}")
+                    print(yaml.dump(asdict(cfg)))
+
+                    launch_experiment(args.strategy, cfg, args.resume_from, args.debug)
+        else:
+            print(yaml.dump(asdict(cfg)))
+
+            input("Press Enter to continue...")
+
+            for sweep_value in sweep_values:
+                setattr_nested(cfg, args.sweep_param, sweep_value)
+                print(f"Running with {args.sweep_param}={sweep_value}")
+                print(yaml.dump(asdict(cfg)))
+
+                launch_experiment(args.strategy, cfg, args.resume_from, args.debug)
     else:
         print(yaml.dump(asdict(cfg)))
         input("Press Enter to continue...")
         launch_experiment(args.strategy, cfg, args.resume_from, args.debug)
 
-    # for sweep_value in sweep_values:
-    #     setattr(cfg, args.sweep_param, sweep_value)
-    #     print(f"Running with {args.sweep_param}={sweep_value}")
+    logging.info("Done!")

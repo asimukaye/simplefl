@@ -208,7 +208,7 @@ class Client:
         self.start_epoch = checkpoint["epoch"]
 
 
-def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig, resumed=False):
+def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig):
 
     global_model = in_model
     global_model.to(cfg.train.device)
@@ -230,7 +230,7 @@ def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig, resumed=Fa
             model=deepcopy(in_model),
         )
 
-    if resumed:
+    if cfg.resumed:
         server_ckpt = find_server_checkpoint()
         start_round = load_server_checkpoint(server_ckpt, global_model)
         for cid, client in clients.items():
