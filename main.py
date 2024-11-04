@@ -18,7 +18,14 @@ from torch.nn import Module
 from torch.backends import cudnn, mps
 from torch.utils.data import Dataset
 
-from config import compile_config, load_config, set_debug_config, CGSVConfig, Config
+from config import (
+    compile_config,
+    load_config,
+    set_debug_config,
+    CGSVConfig,
+    Config,
+    FHGConfig,
+)
 from data import load_raw_dataset
 from model import init_model
 from icecream import install, ic
@@ -27,29 +34,34 @@ install()
 ic.configureOutput(includeContext=True)
 
 HOME_DIR = os.getcwd()
+
+
 # logger = logging.getLogger(__name__)
 def setattr_nested(base, path: str, value):
     """Accept a dotted path to a nested attribute to set."""
-    splits = path.split('.')
+    splits = path.split(".")
     intermediates = splits[:-1]
     target = splits[-1]
     for attrname in intermediates:
         base = getattr(base, attrname)
     setattr(base, target, value)
 
+
 def getattr_nested(base: t.Any, path: str) -> t.Any:
-    splits = path.split('.')
+    splits = path.split(".")
     for attrname in splits:
         base = getattr(base, attrname)
     return base
 
+
 def hasattr_nested(base, path: str):
-    splits = path.split('.')
+    splits = path.split(".")
     for attrname in splits:
         if not hasattr(base, attrname):
             return False
         base = getattr(base, attrname)
     return True
+
 
 def set_seed(seed):
     torch.manual_seed(seed)
@@ -148,6 +160,15 @@ def launch_experiment(strategy: str, cfg: Config, resume_from: str, debug: bool)
             from fedavg import run_fedavg
 
             out = run_fedavg(dataset, model_instance, cfg)
+        case "fedopt":
+            from fedopt import run_fedopt
+
+            out = run_fedopt(dataset, model_instance, cfg)
+        case "fedhigrad":
+            from fedhigrad import run_fedhigrad
+
+            assert isinstance(cfg, FHGConfig)
+            out = run_fedhigrad(dataset, model_instance, cfg)
         case "cgsv":
             from cgsv import run_cgsv
 
@@ -155,11 +176,12 @@ def launch_experiment(strategy: str, cfg: Config, resume_from: str, debug: bool)
             out = run_cgsv(dataset, model_instance, cfg)
         case "centralized":
             from centralized import run_centralized
+
             assert isinstance(cfg, Config)
             out = run_centralized(dataset, model_instance, cfg)
         case _:
             raise NotImplementedError
-    
+
     if cfg.use_wandb:
         wandb.finish()
     os.chdir(HOME_DIR)
@@ -189,15 +211,15 @@ if __name__ == "__main__":
     else:
         cfg = compile_config(args.strategy)
 
-
     if args.debug:
         print("_____DEBUG MODE______\n")
         cfg = set_debug_config(cfg)
 
- 
     if args.sweep_param:
-        assert(len(args.sweep_values) > 0)
-        assert hasattr_nested(cfg, args.sweep_param), f"{args.sweep_param} not in config"
+        assert len(args.sweep_values) > 0
+        assert hasattr_nested(
+            cfg, args.sweep_param
+        ), f"{args.sweep_param} not in config"
         # val = attrgetter(args.sweep_param)(cfg)
         val = getattr_nested(cfg, args.sweep_param)
         astype = type(val)
@@ -207,13 +229,17 @@ if __name__ == "__main__":
         print(f"Sweeping over param: {args.sweep_param} with values:{sweep_values}")
 
         if args.sweep_param2:
-            assert(len(args.sweep_values2) > 0)
-            assert hasattr_nested(cfg, args.sweep_param2), f"{args.sweep_param2} not in config"
+            assert len(args.sweep_values2) > 0
+            assert hasattr_nested(
+                cfg, args.sweep_param2
+            ), f"{args.sweep_param2} not in config"
             val2 = getattr_nested(cfg, args.sweep_param2)
             astype2 = type(val2)
             sweep_values2 = [astype2(x) for x in args.sweep_values2]
 
-            print(f"Sweeping over param2: {args.sweep_param2} with values:{sweep_values2}")
+            print(
+                f"Sweeping over param2: {args.sweep_param2} with values:{sweep_values2}"
+            )
 
             print(yaml.dump(asdict(cfg)))
 
@@ -223,7 +249,9 @@ if __name__ == "__main__":
                 setattr_nested(cfg, args.sweep_param, sweep_value)
                 for sweep_value2 in sweep_values2:
                     setattr_nested(cfg, args.sweep_param2, sweep_value2)
-                    print(f"Running with {args.sweep_param}={sweep_value} and {args.sweep_param2}={sweep_value2}")
+                    print(
+                        f"Running with {args.sweep_param}={sweep_value} and {args.sweep_param2}={sweep_value2}"
+                    )
                     print(yaml.dump(asdict(cfg)))
 
                     launch_experiment(args.strategy, cfg, args.resume_from, args.debug)

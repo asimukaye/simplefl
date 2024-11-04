@@ -164,7 +164,7 @@ class Client:
         self.start_epoch = checkpoint["epoch"]
 
 
-def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config):
+def run_fedopt(dataset: DatasetPair, model: Module, cfg: Config):
 
     global_model = model
     global_model.to(cfg.train.device)
@@ -296,16 +296,25 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config):
 
         #### AGGREGATE ####
 
-        clients_params = {
-            cid: dict(client.model.named_parameters())
-            for cid, client in clients.items()
-        }
+        clients_deltas: dict[str, list[Tensor]] = {}
 
-        for key, param in global_model.named_parameters():
-            temp_parameter = torch.zeros_like(param.data)
-            for cid, params in clients_params.items():
-                temp_parameter.data.add_(weights[cid] * params[key].data)
-            param.data = temp_parameter
+        for cid, client in clients.items():
+            cdelta = []
+            for cparam, gparam in zip(
+                client.model.parameters(), global_model.parameters()
+            ):
+                delta = cparam.data - gparam.data
+                cdelta.append(delta)
+
+            clients_deltas[cid] = cdelta
+
+
+        # Aggregate
+        for k, gparam in enumerate(global_model.parameters()):
+            temp_delta = torch.zeros_like(gparam.data)
+            for cid, deltas in clients_deltas.items():
+                temp_delta.add_(weights[cid] * deltas[k].data)
+            gparam.data.add_(temp_delta)
 
         # server_optimizer.step()
         # server_scheduler.step()

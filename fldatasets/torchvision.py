@@ -135,7 +135,7 @@ class FastCIFAR100(CIFAR100):
 def get_fast_cifar10(cfg: DatasetConfig):
     train = FastCIFAR10(root=DATA_PATH, train=True, download=True)
     test = FastCIFAR10(root=DATA_PATH, train=False, download=True)
-    return VisionClfDataset(train, "CIFAR10"), VisionClfDataset(test, "CIFAR10")
+    return VisionClfDataset(train, "FastCIFAR10"), VisionClfDataset(test, "FastCIFAR10")
 
 
 def get_cifar100(cfg: DatasetConfig):

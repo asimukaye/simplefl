@@ -2,12 +2,13 @@ from copy import deepcopy
 import time
 import logging
 import math
-import random
+from typing import Iterator
 from pandas import json_normalize
 import torch
 import numpy as np
 from torch import Tensor
 from torch.utils.data import DataLoader, Subset
+
 # from wandb.sdk.wandb_run import Run
 import wandb
 
@@ -36,7 +37,7 @@ from fedavg import simple_trainer, simple_evaluator
 logger = logging.getLogger(__name__)
 
 
-def compute_grad_update(old_model, new_model, device=None):
+def compute_grad_update(old_model: Module, new_model: Module, device=None):
     # maybe later to implement on selected layers/parameters
     if device:
         old_model, new_model = old_model.to(device), new_model.to(device)
@@ -55,7 +56,7 @@ def add_gradient_updates(grad_update_1, grad_update_2, weight=1.0):
         param_1.data += param_2.data * weight
 
 
-def add_update_to_model(model, update, weight=1.0, device=None):
+def add_update_to_model(model: Module, update: list[Tensor], weight=1.0, device=None):
     if not update:
         return model
     if device:
@@ -65,6 +66,9 @@ def add_update_to_model(model, update, weight=1.0, device=None):
     for param_model, param_update in zip(model.parameters(), update):
         param_model.data += weight * param_update.data
     return model
+
+
+# def my_update
 
 
 def compare_models(model1, model2):
@@ -78,11 +82,11 @@ def sign(grad):
     return [torch.sign(update) for update in grad]
 
 
-def flatten(grad_update):
-    return torch.cat([update.data.view(-1) for update in grad_update])
+def flatten(grad_updates: Iterator[Tensor] | list[Tensor]):
+    return torch.cat([update.data.view(-1) for update in grad_updates])
 
 
-def unflatten(flattened, normal_shape):
+def unflatten(flattened: Tensor, normal_shape: Iterator[Tensor] | list[Tensor]):
     grad_update = []
     for param in normal_shape:
         n_params = len(param.view(-1))
@@ -108,25 +112,29 @@ def cosine_similarity(grad1, grad2, normalized=False):
     else:
         return
 
-def mask_grad_update_by_order(grad_update, mask_order=None, mask_percentile=None, mode='all'):
 
-    if mode == 'all':
+def mask_grad_update_by_order(
+    grad_update: list[Tensor], mask_order=None, mask_percentile=None, mode="all"
+):
+
+    if mode == "all":
         # mask all but the largest <mask_order> updates (by magnitude) to zero
-        all_update_mod = torch.cat([update.data.view(-1).abs()
-                                    for update in grad_update])
+        all_update_mod = torch.cat(
+            [update.data.view(-1).abs() for update in grad_update]
+        )
         if not mask_order and mask_percentile is not None:
             mask_order = int(len(all_update_mod) * mask_percentile)
-        
+
         if mask_order == 0:
-            return mask_grad_update_by_magnitude(grad_update, float('inf'))
+            return mask_grad_update_by_magnitude(grad_update, float("inf"))
         else:
-            topk, indices = torch.topk(all_update_mod, mask_order) # type: ignore
+            topk, indices = torch.topk(all_update_mod, mask_order)  # type: ignore
             return mask_grad_update_by_magnitude(grad_update, topk[-1])
 
-    elif mode == 'layer': # layer wise largest-values criterion
+    elif mode == "layer":  # layer wise largest-values criterion
         grad_update = deepcopy(grad_update)
 
-        mask_percentile = max(0, mask_percentile) # type: ignore
+        mask_percentile = max(0, mask_percentile)  # type: ignore
         for i, layer in enumerate(grad_update):
             layer_mod = layer.data.view(-1).abs()
             if mask_percentile is not None:
@@ -135,12 +143,16 @@ def mask_grad_update_by_order(grad_update, mask_order=None, mask_percentile=None
             if mask_order == 0:
                 grad_update[i].data = torch.zeros(layer.data.shape, device=layer.device)
             else:
-                topk, indices = torch.topk(layer_mod, 
-                               min(mask_order, len(layer_mod)-1)) # type: ignore
+                topk, indices = torch.topk(
+                    layer_mod, min(mask_order, len(layer_mod) - 1)
+                )  # type: ignore
                 grad_update[i].data[layer.data.abs() < topk[-1]] = 0
         return grad_update
+    else:
+        raise ValueError("Invalid grad update by order mode")
 
-def mask_grad_update_by_magnitude(grad_update, mask_constant):
+
+def mask_grad_update_by_magnitude(grad_update: list[Tensor], mask_constant):
 
     # mask all but the updates with larger magnitude than <mask_constant> to zero
     # print('Masking all gradient updates with magnitude smaller than ', mask_constant)
@@ -148,7 +160,7 @@ def mask_grad_update_by_magnitude(grad_update, mask_constant):
     for i, update in enumerate(grad_update):
         grad_update[i].data[update.data.abs() < mask_constant] = 0
     return grad_update
-    
+
 
 class Client:
     def __init__(
@@ -172,7 +184,7 @@ class Client:
             self.dataset.train, batch_size=self.tr_cfg.batch_size, shuffle=True
         )
         self.test_loader = DataLoader(
-            self.dataset.test, batch_size=self.tr_cfg.eval_batch_size, shuffle=True
+            self.dataset.test, batch_size=self.tr_cfg.eval_batch_size, shuffle=False
         )
         self.start_epoch = 0
 
@@ -260,7 +272,9 @@ def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig):
     total_size = sum(shard_sizes)
     shard_sizes = torch.tensor(shard_sizes).float()
     relative_shard_sizes = torch.div(shard_sizes, torch.sum(shard_sizes))
-    weights_log = {cid: rel_size for cid, rel_size in zip(client_ids, relative_shard_sizes)}
+    weights_log = {
+        cid: rel_size for cid, rel_size in zip(client_ids, relative_shard_sizes)
+    }
     D = sum([p.numel() for p in global_model.parameters()])
     rs_list = []
     rs = torch.zeros(cfg.num_clients, device=cfg.train.device)
@@ -313,18 +327,20 @@ def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig):
                 old_model=backup, new_model=client.model, device=cfg.train.device
             )
 
-            flattened = flatten(gradient)
-            norm_value = norm(flattened) + 1e-7  # to prevent division by zero
-            if norm_value > cfg.gamma:
-                gradient = unflatten(
-                    torch.multiply(
-                        torch.tensor(cfg.gamma), torch.div(flattened, norm_value)
-                    ),
-                    gradient,
-                )
+            # Disabling gamma for testing
+            if not cfg.use_reputation:
+                flattened = flatten(gradient)
+                norm_value = norm(flattened) + 1e-7  # to prevent division by zero
+                if norm_value > cfg.gamma:
+                    gradient = unflatten(
+                        torch.multiply(
+                            torch.tensor(cfg.gamma), torch.div(flattened, norm_value)
+                        ),
+                        gradient,
+                    )
 
-                client.model.load_state_dict(backup.state_dict())
-                add_update_to_model(client.model, gradient, device=cfg.train.device)
+                    client.model.load_state_dict(backup.state_dict())
+                    add_update_to_model(client.model, gradient, device=cfg.train.device)
 
             gradients.append(gradient)
 
@@ -383,7 +399,9 @@ def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig):
         if not cfg.use_reputation:
             # fedavg
             for gradient, weight in zip(gradients, relative_shard_sizes):
-                add_gradient_updates(aggregated_gradient, gradient, weight=weight.item())
+                add_gradient_updates(
+                    aggregated_gradient, gradient, weight=weight.item()
+                )
 
         else:
             if curr_round == 0:
@@ -392,8 +410,9 @@ def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig):
                 weights = rs
 
             for gradient, weight in zip(gradients, weights):
-                add_gradient_updates(aggregated_gradient, gradient, weight=weight.item())
-
+                add_gradient_updates(
+                    aggregated_gradient, gradient, weight=weight.item()
+                )
 
             flat_aggre_grad = flatten(aggregated_gradient)
 
@@ -414,13 +433,16 @@ def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig):
             rs_list.append(rs)
             qs_list.append(q_ratios)
 
-            metrics["weights"][cid] = weights[i].item()
-            metrics["q_ratios"][cid] = q_ratios[i].item()
-            metrics["phis"][cid] = phis[i].item()
-            metrics["rs"][cid] = rs[i].item()
+            # Sanity check
 
+            # weight
+            for i, cid in enumerate(client_ids):
+                metrics["weights"][cid] = weights[i].item()
+                metrics["q_ratios"][cid] = q_ratios[i].item()
+                metrics["phis"][cid] = phis[i].item()
+                metrics["rs"][cid] = rs[i].item()
 
-        #THIS LINE WAS MISSING IN RFFL
+        # THIS LINE WAS MISSING IN RFFL
         # update the global model
         add_update_to_model(global_model, aggregated_gradient, device=cfg.train.device)
 
@@ -447,11 +469,6 @@ def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig):
                 reward_gradient = aggregated_gradient
 
             add_update_to_model(clients[cid].model, reward_gradient)
-
-            
-
-        # server_optimizer.step()
-        # server_scheduler.step()
 
         ### CLIENTS EVALUATE post aggregation###
         eval_ids = client_ids
@@ -488,8 +505,6 @@ def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig):
             save_checkpoint(curr_round, global_model, server_optimizer, "server")
 
         loop_end = time.time() - loop_start
-
-        # ic("Post", metrics["accuracy"]["eval"]["mean"], metrics["phase"])
 
         logger.info(
             f"------------ Round {curr_round} completed in time: {loop_end} ------------\n"

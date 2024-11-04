@@ -39,6 +39,8 @@ def run_centralized(
     client_datasets = get_client_datasets(cfg.split, dataset)
     pooled_set = pool_datasets(client_datasets)
 
+    # pooled_set = dataset
+
     logger.info(f"Server pooled dataset train size: {len(pooled_set.train)}")
 
     train_loader = DataLoader(
