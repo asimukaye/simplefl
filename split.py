@@ -91,7 +91,7 @@ def add_image_noise_to_datasets(
 
     if isinstance(cfg.noise_mu, list):
         assert (
-            len(cfg.noise_mu) >= cfg.num_noisy_clients
+            len(cfg.noise_mu) == cfg.num_noisy_clients
         ), "Number of noise means should match number of patho clients"
         noise_mu_list = cfg.noise_mu
     else:
@@ -99,7 +99,7 @@ def add_image_noise_to_datasets(
 
     if isinstance(cfg.noise_sigma, list):
         assert (
-            len(cfg.noise_sigma) >= cfg.num_noisy_clients
+            len(cfg.noise_sigma) == cfg.num_noisy_clients
         ), "Number of noise sigmas should match number of patho clients"
         noise_sigma_list = cfg.noise_sigma
     else:

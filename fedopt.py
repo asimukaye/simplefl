@@ -86,6 +86,7 @@ def simple_trainer(
 
     return {"loss": avg_loss, "accuracy": get_accuracy(all_outputs, all_targets)}
 
+
 def aggregate_metrics(metrics: dict | list):
     if isinstance(metrics, dict):
         m_list = list(metrics.values())
@@ -93,9 +94,10 @@ def aggregate_metrics(metrics: dict | list):
         m_list = metrics
     else:
         raise ValueError("Metrics should be either dict or list")
-    
+
     mean = np.mean(m_list)
     return mean
+
 
 def random_client_selection(sampling_fraction: float, cids: list[str]):
 
@@ -121,7 +123,8 @@ class Client:
         self.tr_cfg = train_cfg
         self.optimizer = self.tr_cfg.optim_partial(
             self.model.parameters(), lr=self.tr_cfg.lr
-        )
+        )   
+        
         self.data_size = len(self.dataset.train)
         self.test_size = len(self.dataset.test)
         self.train_loader = DataLoader(
@@ -166,7 +169,7 @@ class Client:
 
 def run_fedopt(dataset: DatasetPair, model: Module, cfg: Config):
 
-    global_model = model
+    global_model = deepcopy(model)
     global_model.to(cfg.train.device)
     global_model.eval()
     global_model.zero_grad()
@@ -257,7 +260,7 @@ def run_fedopt(dataset: DatasetPair, model: Module, cfg: Config):
                 metrics["accuracy"]["train"][cid] = result["accuracy"]
 
             for metric in ["loss", "accuracy"]:
-                m_list = list(metrics[metric]["train"].values())
+                m_list = [metrics[metric]["train"][cid] for cid in client_ids]
                 metrics[metric]["train"]["mean"] = sum(m_list) / len(m_list)
                 logger.info(
                     f"CLIENT TRAIN mean {metric}: {metrics[metric]['train']['mean']}"
@@ -279,8 +282,7 @@ def run_fedopt(dataset: DatasetPair, model: Module, cfg: Config):
             metrics["accuracy"]["eval_pre"][cid] = eval_result_pre["accuracy"]
 
         for metric in ["loss", "accuracy"]:
-            m_list = list(metrics[metric]["eval"].values())
-            # mean = sum(m_list) / len(m_list)
+            m_list = [metrics[metric]["eval"][cid] for cid in client_ids]
             mean = np.mean(m_list)
             metrics[metric]["eval"]["mean"] = mean
             metrics[metric]["eval_pre"]["mean"] = mean
@@ -308,13 +310,18 @@ def run_fedopt(dataset: DatasetPair, model: Module, cfg: Config):
 
             clients_deltas[cid] = cdelta
 
-
+            ##  Testing
+        # aggregated_delta = [
+        #         torch.zeros(param.shape).to(cfg.train.device)
+        #         for param in global_model.parameters()
+        #     ]
         # Aggregate
         for k, gparam in enumerate(global_model.parameters()):
             temp_delta = torch.zeros_like(gparam.data)
             for cid, deltas in clients_deltas.items():
                 temp_delta.add_(weights[cid] * deltas[k].data)
             gparam.data.add_(temp_delta)
+            # aggregated_delta[k] = temp_delta
 
         # server_optimizer.step()
         # server_scheduler.step()
@@ -325,6 +332,14 @@ def run_fedopt(dataset: DatasetPair, model: Module, cfg: Config):
                 client.model.parameters(), global_model.parameters()
             ):
                 cparam.data.copy_(gparam.data)
+                # ic(cparam.data.grad.norm())
+                # ic(cparam.requires_grad)
+
+        ### Aggregate the delta on clients
+        # for cid, client in clients.items():
+        #     for cparam, gdelta in zip(client.model.parameters(), aggregated_delta):
+        #         cparam.data.add_(gdelta)
+        #         ic(cparam.requires_grad)
 
         ### CLIENTS EVALUATE post aggregation###
         eval_ids = client_ids
@@ -337,7 +352,7 @@ def run_fedopt(dataset: DatasetPair, model: Module, cfg: Config):
             metrics["accuracy"]["eval_post"][cid] = eval_result_post["accuracy"]
 
         for metric in ["loss", "accuracy"]:
-            m_list = list(metrics[metric]["eval"].values())
+            m_list = [metrics[metric]["eval"][cid] for cid in client_ids]
             mean = np.mean(m_list)
             metrics[metric]["eval"]["mean"] = mean
             metrics[metric]["eval_post"]["mean"] = mean
@@ -361,8 +376,6 @@ def run_fedopt(dataset: DatasetPair, model: Module, cfg: Config):
             save_checkpoint(curr_round, global_model, server_optimizer, "server")
 
         loop_end = time.time() - loop_start
-
-        # ic("Post", metrics["accuracy"]["eval"]["mean"], metrics["phase"])
 
         logger.info(
             f"------------ Round {curr_round} completed in time: {loop_end} ------------\n"

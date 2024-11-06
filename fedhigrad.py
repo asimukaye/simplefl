@@ -242,7 +242,7 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
                 metrics["accuracy"]["train"][cid] = result["accuracy"]
 
             for metric in ["loss", "accuracy"]:
-                m_list = list(metrics[metric]["train"].values())
+                m_list = [metrics[metric]["train"][cid] for cid in client_ids]
                 metrics[metric]["train"]["mean"] = sum(m_list) / len(m_list)
                 logger.info(
                     f"CLIENT TRAIN mean {metric}: {metrics[metric]['train']['mean']}"
@@ -264,7 +264,7 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
             metrics["accuracy"]["eval_pre"][cid] = eval_result_pre["accuracy"]
 
         for metric in ["loss", "accuracy"]:
-            m_list = list(metrics[metric]["eval"].values())
+            m_list = [metrics[metric]["eval"][cid] for cid in client_ids]
             # mean = sum(m_list) / len(m_list)
             mean = np.mean(m_list)
             metrics[metric]["eval"]["mean"] = mean
@@ -280,11 +280,6 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
             step_count += 1
 
         #### AGGREGATE ####
-
-        # clients_deltas = {
-        #     cid: dict(client.model.named_parameters())
-        #     for cid, client in clients.items()
-        # }
 
         clients_deltas: dict[str, list[Tensor]] = {}
 
@@ -307,7 +302,7 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
             if cfg.phi_method == "mean":
                 stacked = torch.stack(list(model_std.values()))
                 # ic(stacked.shape)
-                start = time.time()
+                # start = time.time()
                 sigma_rms = torch.pow(torch.mean(stacked.square(), dim=1), 0.5)
                 inv_sigma = torch.div(1, sigma_rms+1e-8)
                 phis = torch.div(inv_sigma, torch.sum(inv_sigma))
@@ -322,10 +317,6 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
                 # norm_phis = torch.div(inv_norm, torch.sum(inv_norm))
                 # ic("time 2", time.time() - start2)
 
-                # ic("Norm inv sigmas", norm_phis)
-                # # norm = stacked.norm(dim=1)
-                # ic("Norm", norm)
-                # ic("Mean * root n", phis*torch.sqrt(torch.tensor(stacked.shape[0])))
             elif cfg.phi_method == "norm":
                 stacked = torch.stack(list(model_std.values()))
                 norm = stacked.norm(dim=1)
@@ -364,7 +355,11 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
             ):
                 cparam.data.copy_(gparam.data)
             
-        
+        for i, cid in enumerate(client_ids):
+            metrics["weights"][cid] = weights[i].item()
+            metrics["phis"][cid] = phis[i].item()
+            metrics["rs"][cid] = rs[i].item()
+
 
         ### CLIENTS EVALUATE post aggregation###
         eval_ids = client_ids
@@ -377,7 +372,7 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
             metrics["accuracy"]["eval_post"][cid] = eval_result_post["accuracy"]
 
         for metric in ["loss", "accuracy"]:
-            m_list = list(metrics[metric]["eval"].values())
+            m_list = [metrics[metric]["eval"][cid] for cid in client_ids]
             mean = np.mean(m_list)
             metrics[metric]["eval"]["mean"] = mean
             metrics[metric]["eval_post"]["mean"] = mean
@@ -402,7 +397,6 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
 
         loop_end = time.time() - loop_start
 
-        # ic("Post", metrics["accuracy"]["eval"]["mean"], metrics["phase"])
 
         logger.info(
             f"------------ Round {curr_round} completed in time: {loop_end} ------------\n"

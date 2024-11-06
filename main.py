@@ -76,9 +76,15 @@ def set_seed(seed):
 
 
 def get_wandb_run_id(root_dir=".") -> str:
-    with open(root_dir + "/wandb/wandb-resume.json", "r") as f:
-        wandb_json = json.load(f)
-    return wandb_json["run_id"]
+    list_dir = os.listdir(root_dir + "/wandb/latest-run")
+    for list_item in list_dir:
+        if ".wandb" in list_item:
+            run_id = list_item.split("-")[-1].removesuffix(".wandb")
+            print(f"Found run_id: {run_id}")
+    # with open(root_dir + "/wandb/wandb-resume.json", "r") as f:
+    #     wandb_json = json.load(f)
+    # run_id = wandb_json["run_id"]
+    return run_id
 
 
 def setup_output_dirs(suffix="debug"):
@@ -105,7 +111,7 @@ def setup_logging(level=logging.INFO):
     stream_handler.setFormatter(formatter)
     root_logger.addHandler(stream_handler)
 
-    file_handler = logging.FileHandler("log.txt")
+    file_handler = logging.FileHandler("simplefl.log")
     file_handler.mode = "a"
     file_handler.setLevel(level)
     file_handler.setFormatter(verbose_formatter)
@@ -143,6 +149,7 @@ def launch_experiment(strategy: str, cfg: Config, resume_from: str, debug: bool)
     else:
         setup_logging(level=logging.INFO)
 
+    logging.info("Starting experiment: odir: %s", os.getcwd())
     if cfg.use_wandb:
         run = wandb.init(
             project="simplefl",
@@ -179,6 +186,11 @@ def launch_experiment(strategy: str, cfg: Config, resume_from: str, debug: bool)
 
             assert isinstance(cfg, Config)
             out = run_centralized(dataset, model_instance, cfg)
+        case "standalone":
+            from standalone import run_standolone
+
+            assert isinstance(cfg, Config)
+            out = run_standolone(dataset, model_instance, cfg)
         case _:
             raise NotImplementedError
 
@@ -198,7 +210,7 @@ if __name__ == "__main__":
     parser.add_argument("-v", "--sweep_values", nargs="+")
     parser.add_argument("-p2", "--sweep_param2", type=str, default="")
     parser.add_argument("-v2", "--sweep_values2", nargs="+")
-    parser.add_argument("--rounds", default=0)
+    parser.add_argument("--rounds", type=int, default=0)
 
     args = parser.parse_args()
 
@@ -226,6 +238,8 @@ if __name__ == "__main__":
         sweep_values = [astype(x) for x in args.sweep_values]
         print("_____SWEEP MODE______\n")
 
+        orig_desc = cfg.desc
+
         print(f"Sweeping over param: {args.sweep_param} with values:{sweep_values}")
 
         if args.sweep_param2:
@@ -249,6 +263,11 @@ if __name__ == "__main__":
                 setattr_nested(cfg, args.sweep_param, sweep_value)
                 for sweep_value2 in sweep_values2:
                     setattr_nested(cfg, args.sweep_param2, sweep_value2)
+                    cfg.desc = (
+                        orig_desc
+                        + f" sweep1 {args.sweep_param}={sweep_value}, sweep2 {args.sweep_param2}={sweep_value2}"
+                    )
+
                     print(
                         f"Running with {args.sweep_param}={sweep_value} and {args.sweep_param2}={sweep_value2}"
                     )
@@ -262,7 +281,10 @@ if __name__ == "__main__":
 
             for sweep_value in sweep_values:
                 setattr_nested(cfg, args.sweep_param, sweep_value)
+
+                cfg.desc = orig_desc + f" sweep {args.sweep_param}={sweep_value}"
                 print(f"Running with {args.sweep_param}={sweep_value}")
+
                 print(yaml.dump(asdict(cfg)))
 
                 launch_experiment(args.strategy, cfg, args.resume_from, args.debug)

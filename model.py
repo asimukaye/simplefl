@@ -73,27 +73,55 @@ class MNIST_Net(nn.Module):
         return x
 
 
-class TwoCNN(torch.nn.Module):  # McMahan et al., 2016; 1,663,370 parameters
+class TwoCNN(torch.nn.Module): # McMahan et al., 2016; 1,663,370 parameters
     """"""
-
     def __init__(self, in_channels, num_classes):
         super(TwoCNN, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels, 6, 5)
-        self.pool = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(6, 16, 5)
-        self.fc1 = nn.Linear(16 * 5 * 5, 120)
-        self.fc2 = nn.Linear(120, 84)
-        self.fc3 = nn.Linear(84, num_classes)
+
+        self.features = torch.nn.Sequential(
+            torch.nn.Conv2d(in_channels=in_channels, out_channels=256, kernel_size=(5, 5), padding=1, stride=1, bias=True),
+            torch.nn.ReLU(True),
+            torch.nn.MaxPool2d(kernel_size=(2, 2), padding=1),
+            torch.nn.Conv2d(in_channels=256, out_channels=256 * 2, kernel_size=(5, 5), padding=1, stride=1, bias=True),
+            torch.nn.ReLU(True),
+            torch.nn.MaxPool2d(kernel_size=(2, 2), padding=1)
+        )
+        self.classifier = torch.nn.Sequential(
+            torch.nn.AdaptiveAvgPool2d((7, 7)),
+            torch.nn.Flatten(),
+            torch.nn.Linear(in_features=(256 * 2) * (7 * 7), out_features=512, bias=True),
+            torch.nn.ReLU(True),
+            torch.nn.Linear(in_features=512, out_features=num_classes, bias=True)
+        )
 
     def forward(self, x):
-        x = self.pool(F.relu(self.conv1(x)))
-        x = self.pool(F.relu(self.conv2(x)))
-        x = x.view(-1, 16 * 5 * 5)
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
+        x = self.features(x)
+        x = self.classifier(x)
         return x
+    
+class TwoCNNv2(torch.nn.Module): # McMahan et al., 2016; 1,663,370 parameters
+    """"""
+    def __init__(self, in_channels, num_classes):
+        super(TwoCNNv2, self).__init__()
+        
+        self.conv1 = torch.nn.Conv2d(in_channels=in_channels, out_channels=256, kernel_size=(5, 5), padding=2, stride=1, bias=True)
+        self.conv2 = torch.nn.Conv2d(in_channels=256, out_channels=256 * 2, kernel_size=(5, 5), padding=1, stride=1, bias=True)
+        self.pool2 = torch.nn.MaxPool2d(kernel_size=(2, 2), padding=1)
+        self.fc1 = torch.nn.Linear(in_features=(256 * 2) * 7 * 7, out_features=512, bias=True)
 
+        self.fc2 = torch.nn.Linear(in_features=512, out_features=num_classes, bias=True)
+    
+
+    def forward(self, x):
+        x = F.relu(self.conv1(x))
+        x = F.max_pool2d(x, 2, 2)
+        x = F.relu(self.conv2(x))
+        x = F.max_pool2d(x, 2, 2)
+        x = F.adaptive_avg_pool2d(x, (7, 7))
+        x = x.view(-1, 256 * 2 * 7 * 7)
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
 
 ##########
 # ResNet #
@@ -194,6 +222,7 @@ class ResNet34(ResNet):
 
 MODEL_MAP = {
     "twocnn": TwoCNN,
+    "twocnnv2": TwoCNNv2,
     "fednet": FedNet,
     "resnet18": ResNet18,
     "resnet34": ResNet34,

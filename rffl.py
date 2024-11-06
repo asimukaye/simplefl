@@ -47,9 +47,7 @@ def compute_grad_update(old_model: Module, new_model: Module, device=None):
     ]
 
 
-def add_gradient_updates(
-    grad_update_1: list[Tensor], grad_update_2: list[Tensor], weight=1.0
-):
+def add_gradient_updates(grad_update_1, grad_update_2, weight=1.0):
     assert len(grad_update_1) == len(
         grad_update_2
     ), "Lengths of the two grad_updates not equal"
@@ -73,7 +71,7 @@ def add_update_to_model(model: Module, update: list[Tensor], weight=1.0, device=
 # def my_update
 
 
-def compare_models(model1: Module, model2: Module):
+def compare_models(model1, model2):
     for p1, p2 in zip(model1.parameters(), model2.parameters()):
         if p1.data.ne(p2.data).sum() > 0:
             return False  # two models have different weights
@@ -146,8 +144,8 @@ def mask_grad_update_by_order(
                 grad_update[i].data = torch.zeros(layer.data.shape, device=layer.device)
             else:
                 topk, indices = torch.topk(
-                    layer_mod, min(mask_order, len(layer_mod) - 1) # type: ignore
-                ) 
+                    layer_mod, min(mask_order, len(layer_mod) - 1)
+                )  # type: ignore
                 grad_update[i].data[layer.data.abs() < topk[-1]] = 0
         return grad_update
     else:
@@ -162,17 +160,6 @@ def mask_grad_update_by_magnitude(grad_update: list[Tensor], mask_constant):
     for i, update in enumerate(grad_update):
         grad_update[i].data[update.data.abs() < mask_constant] = 0
     return grad_update
-
-
-def add_delta_to_model(model: Module, delta: list[Tensor], device=None):
-    for k, param in enumerate(model.parameters()):
-        # temp_delta = torch.zeros_like(param.data)
-        # for deltas in clients_deltas.values():
-        # for c, delta in enumerate(clients_deltas):
-        # temp_delta.add_(weight * delta[k].data)
-        # param.data.add_(temp_delta)
-        param.data.add_(delta[k].data)
-    return model
 
 
 class Client:
@@ -235,7 +222,7 @@ class Client:
 
 def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig):
 
-    global_model = deepcopy(in_model)
+    global_model = in_model
     global_model.to(cfg.train.device)
     global_model.eval()
     global_model.zero_grad()
@@ -278,18 +265,16 @@ def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig):
     server_optimizer = cfg.train.optim_partial(
         global_model.parameters(), lr=cfg.train.lr
     )
-    # server_scheduler = cfg.train.scheduler_partial(server_optimizer)
+    server_scheduler = cfg.train.scheduler_partial(server_optimizer)
 
     # Fedavg weights
     shard_sizes = [clients[cid].data_size for cid in client_ids]
     total_size = sum(shard_sizes)
     shard_sizes = torch.tensor(shard_sizes).float()
     relative_shard_sizes = torch.div(shard_sizes, torch.sum(shard_sizes))
-    weights = relative_shard_sizes
-    # ic(weights.shape)
-    # weights_log = {
-    #     cid: rel_size for cid, rel_size in zip(client_ids, relative_shard_sizes)
-    # }
+    weights_log = {
+        cid: rel_size for cid, rel_size in zip(client_ids, relative_shard_sizes)
+    }
     D = sum([p.numel() for p in global_model.parameters()])
     rs_list = []
     rs = torch.zeros(cfg.num_clients, device=cfg.train.device)
@@ -309,10 +294,10 @@ def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig):
         "loss": {"train": {}, "eval": {}, "eval_pre": {}, "eval_post": {}},
         "accuracy": {"train": {}, "eval": {}, "eval_pre": {}, "eval_post": {}},
         "round": 0,
-        "weights": {},
-        "q_ratios": {},
-        "rs": {},
-        "phis": {},
+        "weights": weights_log,
+        "q_ratios": weights_log,
+        "rs": weights_log,
+        "phis": weights_log,
         "total_epochs": total_epochs,
         "phase": phase_count,
     }
@@ -326,8 +311,6 @@ def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig):
         metrics["round"] = curr_round
 
         gradients = []
-        if cfg.fedopt_debug:
-            clients_deltas = []
 
         #### CLIENTS TRAIN ####
         # select all clients
@@ -340,51 +323,26 @@ def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig):
 
             train_results[cid] = clients[cid].train(curr_round)
 
-            if cfg.fedopt_debug:
-                deltas = []
-                for cparam, gparam in zip(
-                    client.model.parameters(), global_model.parameters()
-                ):
-                    delta = cparam.data - gparam.data
-                    deltas.append(delta)
+            gradient = compute_grad_update(
+                old_model=backup, new_model=client.model, device=cfg.train.device
+            )
 
-                clients_deltas.append(deltas)
-            else:
-                gradient = compute_grad_update(
-                    old_model=backup, new_model=client.model, device=cfg.train.device
-                )
-                # deltas = []
-
-                # for cparam, gparam in zip(
-                #     client.model.parameters(), global_model.parameters()
-                # ):
-                #     delta = cparam.data - gparam.data
-                #     deltas.append(delta)
-
-                # gradient = deltas
-
-                # Disabling gamma for testing
-                # if not cfg.use_reputation:
-                if cfg.normalize_delta:
-
-                    flattened = flatten(gradient)
-                    norm_value = norm(flattened) + 1e-7  # to prevent division by zero
-                    if norm_value > cfg.gamma:
-                        scaled_gradient = torch.multiply(
+            # Disabling gamma for testing
+            if not cfg.use_reputation:
+                flattened = flatten(gradient)
+                norm_value = norm(flattened) + 1e-7  # to prevent division by zero
+                if norm_value > cfg.gamma:
+                    gradient = unflatten(
+                        torch.multiply(
                             torch.tensor(cfg.gamma), torch.div(flattened, norm_value)
-                        )
-                        gradient = unflatten(scaled_gradient, gradient)
-                        # ic("Clip deltas")
+                        ),
+                        gradient,
+                    )
 
-                        logger.info(f"Gradient clipped with norm: {norm_value}")
+                    client.model.load_state_dict(backup.state_dict())
+                    add_update_to_model(client.model, gradient, device=cfg.train.device)
 
-                        # client.model.load_state_dict(backup.state_dict())
-                        # add_update_to_model(client.model, gradient, device=cfg.train.device)
-                        # add_delta_to_model(
-                        #     client.model, gradient, device=cfg.train.device
-                        # )
-
-                gradients.append(gradient)
+            gradients.append(gradient)
 
         for epoch in range(cfg.train.epochs):
             for cid in train_ids:
@@ -394,7 +352,7 @@ def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig):
                 metrics["accuracy"]["train"][cid] = result["accuracy"]
 
             for metric in ["loss", "accuracy"]:
-                m_list = [metrics[metric]["train"][cid] for cid in client_ids]
+                m_list = list(metrics[metric]["train"].values())
                 metrics[metric]["train"]["mean"] = sum(m_list) / len(m_list)
                 logger.info(
                     f"CLIENT TRAIN mean {metric}: {metrics[metric]['train']['mean']}"
@@ -416,7 +374,7 @@ def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig):
             metrics["accuracy"]["eval_pre"][cid] = eval_result_pre["accuracy"]
 
         for metric in ["loss", "accuracy"]:
-            m_list = [metrics[metric]["eval"][cid] for cid in client_ids]
+            m_list = list(metrics[metric]["eval"].values())
             # mean = sum(m_list) / len(m_list)
             mean = np.mean(m_list)
             metrics[metric]["eval"]["mean"] = mean
@@ -433,119 +391,84 @@ def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig):
 
         #### AGGREGATE ####
 
-        if cfg.fedopt_debug:
-            for k, gparam in enumerate(global_model.parameters()):
-                temp_delta = torch.zeros_like(gparam.data)
-                # for deltas in clients_deltas.values():
-                for c, delta in enumerate(clients_deltas):
-                    temp_delta.add_(weights[c] * delta[k].data)
-                gparam.data.add_(temp_delta)
+        aggregated_gradient = [
+            torch.zeros(param.shape).to(cfg.train.device)
+            for param in global_model.parameters()
+        ]
 
-            for i, cid in enumerate(client_ids):
-                # add_update_to_model(clients[cid].model, clients_deltas[i])
-                # clients[cid].model.load_state_dict(global_model.state_dict())
-                for cparam, gparam in zip(
-                    client.model.parameters(), global_model.parameters()
-                ):
-                    cparam.data.copy_(gparam.data)
+        if not cfg.use_reputation:
+            # fedavg
+            for gradient, weight in zip(gradients, relative_shard_sizes):
+                add_gradient_updates(
+                    aggregated_gradient, gradient, weight=weight.item()
+                )
 
         else:
-
-            aggregated_gradient = [
-                torch.zeros(param.shape).to(cfg.train.device)
-                for param in global_model.parameters()
-            ]
-
-            if not cfg.use_reputation:
-                # fedavg
-                for gradient, weight in zip(gradients, relative_shard_sizes):
-                    add_gradient_updates(
-                        aggregated_gradient, gradient, weight=weight.item()
-                    )
+            if curr_round == 0:
+                weights = torch.div(shard_sizes, torch.sum(shard_sizes))
             else:
-                # ic("Aggregate gradients with reputation")
+                weights = rs
 
-                if curr_round == 0:
-                    weights = torch.div(shard_sizes, torch.sum(shard_sizes))
-                else:
-                    weights = rs
-                
-                # ic(weights.sum())
+            for gradient, weight in zip(gradients, weights):
+                add_gradient_updates(
+                    aggregated_gradient, gradient, weight=weight.item()
+                )
 
-                for gradient, weight in zip(gradients, weights):
-                    add_gradient_updates(
-                        aggregated_gradient, gradient, weight=weight.item()
-                    )
+            flat_aggre_grad = flatten(aggregated_gradient)
 
-                flat_aggre_grad = flatten(aggregated_gradient)
+            phis = torch.zeros(cfg.num_clients, device=cfg.train.device)
+            for i, gradient in enumerate(gradients):
+                phis[i] = F.cosine_similarity(
+                    flatten(gradient), flat_aggre_grad, 0, 1e-10
+                )
 
-                phis = torch.zeros(cfg.num_clients, device=cfg.train.device)
-                for i, gradient in enumerate(gradients):
-                    phis[i] = F.cosine_similarity(
-                        flatten(gradient), flat_aggre_grad, 0, 1e-10
-                    )
+            past_phis.append(phis)
 
-                    # # Normalizing phis
-                    # phis[i] = (phis[i] + 1) / 2.0
+            rs = cfg.alpha * rs + (1 - cfg.alpha) * phis
+            rs = torch.div(rs, rs.sum())
 
-                # past_phis.append(phis)
-                # ic(phis)
-                rs = cfg.alpha * rs + (1 - cfg.alpha) * phis
-                # ic(rs)
-                rs = torch.div(rs, rs.sum())
-                # ic(rs)
+            # r_threshold.append(threshold * (1.0 / len(R_set)))
+            q_ratios = torch.div(rs, torch.max(rs))
 
-                # r_threshold.append(threshold * (1.0 / len(R_set)))
-                q_ratios = torch.div(rs, torch.max(rs))
+            rs_list.append(rs)
+            qs_list.append(q_ratios)
 
-                # rs_list.append(rs)
-                # qs_list.append(q_ratios)
+            # Sanity check
 
-                # Sanity check
-                # ic(rs.sum())
-                # ic(rs.shape)
-                # weight
-                for i, cid in enumerate(client_ids):
-                    metrics["weights"][cid] = weights[i].item()
-                    metrics["q_ratios"][cid] = q_ratios[i].item()
-                    metrics["phis"][cid] = phis[i].item()
-                    metrics["rs"][cid] = rs[i].item()
-
-            # THIS LINE WAS MISSING IN RFFL
-            # update the global model
-
-            add_update_to_model(global_model, aggregated_gradient, device=cfg.train.device)
-            # add_delta_to_model(
-                # global_model, aggregated_gradient, device=cfg.train.device
-            # )
-
+            # weight
             for i, cid in enumerate(client_ids):
+                metrics["weights"][cid] = weights[i].item()
+                metrics["q_ratios"][cid] = q_ratios[i].item()
+                metrics["phis"][cid] = phis[i].item()
+                metrics["rs"][cid] = rs[i].item()
 
-                if cfg.use_sparsify and cfg.use_reputation:
+        # THIS LINE WAS MISSING IN RFFL
+        # update the global model
+        add_update_to_model(global_model, aggregated_gradient, device=cfg.train.device)
 
-                    q_ratio = q_ratios[i]
-                    # reward_gradient = mask_grad_update_by_order(
-                    #     aggregated_gradient, mask_percentile=q_ratio, mode="layer"
-                    # )
-                    reward_gradient = mask_grad_update_by_order(
-                        aggregated_gradient, mask_percentile=q_ratio, mode="all"
-                    )
+        for i, cid in enumerate(client_ids):
 
-                elif cfg.use_sparsify and not cfg.use_reputation:
+            if cfg.use_sparsify and cfg.use_reputation:
 
-                    # relative_shard_sizes[i] the relative dataset weight of the local dataset
-                    reward_gradient = mask_grad_update_by_order(
-                        aggregated_gradient,
-                        mask_percentile=relative_shard_sizes[i],
-                        mode="all",
-                    )
+                q_ratio = q_ratios[i]
+                reward_gradient = mask_grad_update_by_order(
+                    aggregated_gradient, mask_percentile=q_ratio, mode="layer"
+                )
 
-                else:  # not use_sparsify
-                    # the reward_gradient is the whole gradient
-                    reward_gradient = aggregated_gradient
-                
-                # add_delta_to_model(clients[cid].model, reward_gradient)
-                add_update_to_model(clients[cid].model, reward_gradient)
+            elif cfg.use_sparsify and not cfg.use_reputation:
+
+                # relative_shard_sizes[i] the relative dataset weight of the local dataset
+                reward_gradient = mask_grad_update_by_order(
+                    aggregated_gradient,
+                    mask_percentile=relative_shard_sizes[i],
+                    mode="layer",
+                )
+
+            else:  # not use_sparsify
+                # the reward_gradient is the whole gradient
+                reward_gradient = aggregated_gradient
+
+            add_update_to_model(clients[cid].model, reward_gradient)
 
         ### CLIENTS EVALUATE post aggregation###
         eval_ids = client_ids
@@ -558,7 +481,7 @@ def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig):
             metrics["accuracy"]["eval_post"][cid] = eval_result_post["accuracy"]
 
         for metric in ["loss", "accuracy"]:
-            m_list = [metrics[metric]["eval"][cid] for cid in client_ids]
+            m_list = list(metrics[metric]["eval"].values())
             mean = np.mean(m_list)
             metrics[metric]["eval"]["mean"] = mean
             metrics[metric]["eval_post"]["mean"] = mean
