@@ -20,92 +20,15 @@ from utils import (
     find_server_checkpoint,
     load_server_checkpoint,
     save_checkpoint,
-    get_accuracy,
 )
 from data import DatasetPair
 from split import get_client_datasets
 from config import TrainConfig, Config
-
+from fedavg import simple_evaluator, simple_trainer
 
 # from sklearn.metrics import accuracy_score
 
 logger = logging.getLogger(__name__)
-
-
-@torch.no_grad()
-def simple_evaluator(model: Module, dataloader: DataLoader, cfg: TrainConfig) -> dict:
-
-    model.eval()
-    model.to(cfg.device)
-
-    loss_list = []
-    outputs_list = []
-    targets_list = []
-    for inputs, targets in tqdm(dataloader):
-        # ic(inputs.shape, targets.shape)
-        inputs, targets = inputs.to(cfg.device), targets.to(cfg.device)
-        outputs = model(inputs)
-        loss: Tensor = cfg.loss_fn(outputs, targets)
-        loss_list.append(loss.data)
-        outputs_list.append(outputs)
-        targets_list.append(targets)
-
-    all_outputs = torch.cat(outputs_list, dim=0)
-    all_targets = torch.cat(targets_list, dim=0)
-    avg_loss = torch.mean(torch.stack(loss_list)).item()
-
-    return {"loss": avg_loss, "accuracy": get_accuracy(all_outputs, all_targets)}
-
-
-def simple_trainer(
-    model: Module, dataloader: DataLoader, cfg: TrainConfig, optimizer: Optimizer
-) -> dict:
-
-    model.train()
-    # model.float()
-    model.to(cfg.device)
-
-    loss_list = []
-    outputs_list = []
-    targets_list = []
-    for inputs, targets in tqdm(dataloader):
-        optimizer.zero_grad()
-        inputs, targets = inputs.to(cfg.device), targets.to(cfg.device)
-        outputs = model(inputs)
-        loss: Tensor = cfg.loss_fn(outputs, targets)
-        loss.backward()
-        optimizer.step()
-
-        loss_list.append(loss.data)
-        outputs_list.append(outputs)
-        targets_list.append(targets)
-
-    all_outputs = torch.cat(outputs_list, dim=0)
-    all_targets = torch.cat(targets_list, dim=0)
-    avg_loss = torch.mean(torch.stack(loss_list)).item()
-
-    return {"loss": avg_loss, "accuracy": get_accuracy(all_outputs, all_targets)}
-
-
-def aggregate_metrics(metrics: dict | list):
-    if isinstance(metrics, dict):
-        m_list = list(metrics.values())
-    elif isinstance(metrics, list):
-        m_list = metrics
-    else:
-        raise ValueError("Metrics should be either dict or list")
-
-    mean = np.mean(m_list)
-    return mean
-
-
-def random_client_selection(sampling_fraction: float, cids: list[str]):
-
-    num_clients = len(cids)
-    num_sampled_clients = max(int(sampling_fraction * num_clients), 1)
-    sampled_client_ids = sorted(random.sample(cids, num_sampled_clients))
-
-    return sampled_client_ids
 
 
 class Client:
@@ -118,13 +41,12 @@ class Client:
     ):
         self.dataset = dataset
 
-        self.model = model
+        self.model = deepcopy(model)
         self.cid = cid
-        self.tr_cfg = train_cfg
+        self.tr_cfg = deepcopy(train_cfg)
         self.optimizer = self.tr_cfg.optim_partial(
             self.model.parameters(), lr=self.tr_cfg.lr
-        )   
-        
+        )
         self.data_size = len(self.dataset.train)
         self.test_size = len(self.dataset.test)
         self.train_loader = DataLoader(

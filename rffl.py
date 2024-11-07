@@ -174,7 +174,7 @@ class Client:
 
         self.model = model
         self.cid = cid
-        self.tr_cfg = train_cfg
+        self.tr_cfg = deepcopy(train_cfg)
         self.optimizer = self.tr_cfg.optim_partial(
             self.model.parameters(), lr=self.tr_cfg.lr
         )

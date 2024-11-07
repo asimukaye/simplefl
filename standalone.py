@@ -29,6 +29,7 @@ from fedavg import simple_trainer, simple_evaluator
 
 logger = logging.getLogger(__name__)
 
+
 class Client:
     def __init__(
         self,
@@ -41,7 +42,7 @@ class Client:
 
         self.model = model
         self.cid = cid
-        self.tr_cfg = train_cfg
+        self.tr_cfg = deepcopy(train_cfg)
         self.optimizer = self.tr_cfg.optim_partial(
             self.model.parameters(), lr=self.tr_cfg.lr
         )
@@ -139,7 +140,7 @@ def run_standolone(dataset: DatasetPair, model: Module, cfg: Config):
     total_size = sum(data_sizes)
     weights = {cid: size / total_size for cid, size in zip(client_ids, data_sizes)}
     if cfg.use_wandb:
-        wandb.log({f"data_sizes/{cid}": data_sizes , "total_size": total_size})
+        wandb.log({f"data_sizes/{cid}": data_sizes, "total_size": total_size})
     logger.info(f"Client data sizes: {data_sizes}")
 
     # Define relevant x axes for logging
@@ -215,14 +216,22 @@ def run_standolone(dataset: DatasetPair, model: Module, cfg: Config):
             metrics["accuracy"]["eval_global"][cid] = global_result["accuracy"]
 
         for metric in ["loss", "accuracy"]:
-            m_array = np.array([metrics[metric]["eval_global"][cid] for cid in client_ids])
+            m_array = np.array(
+                [metrics[metric]["eval_global"][cid] for cid in client_ids]
+            )
             if metric == "loss":
-                inv_m_array = 1/(m_array+1e-6)
-                norm_inv_arr = inv_m_array/inv_m_array.sum()
-                metrics["normalized_inv_loss"] = {cid: norm_inv_arr[i] for i, cid in enumerate(client_ids)}
+                inv_m_array = 1 / (m_array + 1e-6)
+                norm_inv_arr = inv_m_array / inv_m_array.sum()
+                metrics["normalized_inv_loss"] = {
+                    cid: norm_inv_arr[i] for i, cid in enumerate(client_ids)
+                }
             else:
-                norm_arr = m_array/m_array.sum()
-                metrics["normalized_accuracy"] = {cid: norm_arr[i] for i, cid in enumerate(client_ids)}
+                norm_arr = m_array / m_array.sum()
+                metrics["normalized_accuracy"] = {
+                    cid: norm_arr[i] for i, cid in enumerate(client_ids)
+                }
+                # ic(data_sizes)
+                # ic(metrics["normalized_accuracy"])
 
             mean = m_array.mean()
             metrics[metric]["eval_global"]["mean"] = mean

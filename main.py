@@ -25,6 +25,7 @@ from config import (
     CGSVConfig,
     Config,
     FHGConfig,
+    ShapfedConfig
 )
 from data import load_raw_dataset
 from model import init_model
@@ -191,6 +192,11 @@ def launch_experiment(strategy: str, cfg: Config, resume_from: str, debug: bool)
 
             assert isinstance(cfg, Config)
             out = run_standolone(dataset, model_instance, cfg)
+        case "shapfed":
+            from shapfed import run_shapfed
+
+            assert isinstance(cfg, ShapfedConfig)
+            out = run_shapfed(dataset, model_instance, cfg)
         case _:
             raise NotImplementedError
 

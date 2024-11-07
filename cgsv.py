@@ -146,8 +146,8 @@ def mask_grad_update_by_order(
                 grad_update[i].data = torch.zeros(layer.data.shape, device=layer.device)
             else:
                 topk, indices = torch.topk(
-                    layer_mod, min(mask_order, len(layer_mod) - 1) # type: ignore
-                ) 
+                    layer_mod, min(mask_order, len(layer_mod) - 1)  # type: ignore
+                )
                 grad_update[i].data[layer.data.abs() < topk[-1]] = 0
         return grad_update
     else:
@@ -187,7 +187,7 @@ class Client:
 
         self.model = model
         self.cid = cid
-        self.tr_cfg = train_cfg
+        self.tr_cfg = deepcopy(train_cfg)
         self.optimizer = self.tr_cfg.optim_partial(
             self.model.parameters(), lr=self.tr_cfg.lr
         )
@@ -469,7 +469,7 @@ def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig):
                     weights = torch.div(shard_sizes, torch.sum(shard_sizes))
                 else:
                     weights = rs
-                
+
                 # ic(weights.sum())
 
                 for gradient, weight in zip(gradients, weights):
@@ -514,9 +514,11 @@ def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig):
             # THIS LINE WAS MISSING IN RFFL
             # update the global model
 
-            add_update_to_model(global_model, aggregated_gradient, device=cfg.train.device)
+            add_update_to_model(
+                global_model, aggregated_gradient, device=cfg.train.device
+            )
             # add_delta_to_model(
-                # global_model, aggregated_gradient, device=cfg.train.device
+            # global_model, aggregated_gradient, device=cfg.train.device
             # )
 
             for i, cid in enumerate(client_ids):
@@ -528,7 +530,7 @@ def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig):
                     #     aggregated_gradient, mask_percentile=q_ratio, mode="layer"
                     # )
                     reward_gradient = mask_grad_update_by_order(
-                        aggregated_gradient, mask_percentile=q_ratio, mode="all"
+                        aggregated_gradient, mask_percentile=q_ratio, mode="layer"
                     )
 
                 elif cfg.use_sparsify and not cfg.use_reputation:
@@ -543,7 +545,7 @@ def run_cgsv(dataset: DatasetPair, in_model: Module, cfg: CGSVConfig):
                 else:  # not use_sparsify
                     # the reward_gradient is the whole gradient
                     reward_gradient = aggregated_gradient
-                
+
                 # add_delta_to_model(clients[cid].model, reward_gradient)
                 add_update_to_model(clients[cid].model, reward_gradient)
 

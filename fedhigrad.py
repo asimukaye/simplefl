@@ -57,7 +57,7 @@ class FHGClient:
         self.dataset = dataset
         self.model = model
         self.cid = cid
-        self.tr_cfg = train_cfg
+        self.tr_cfg = deepcopy(train_cfg)
         self.optimizer = self.tr_cfg.optim_partial(
             self.model.parameters(), lr=self.tr_cfg.lr
         )
@@ -186,8 +186,6 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
     shard_sizes = torch.tensor(shard_sizes).float()
     relative_shard_sizes = torch.div(shard_sizes, torch.sum(shard_sizes))
 
-
-
     # Define relevant x axes for logging
 
     step_count = 0
@@ -200,7 +198,6 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
     rs = torch.clone(weights)
     phis = torch.zeros_like(rs)
 
-    
     # Define metrics to log
 
     metrics = {
@@ -210,6 +207,9 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
         "weights": {},
         "phis": {},
         "rs": {},
+        "sigmas": {},
+        "sigma_by_mu": {},
+        "delta": {},
         "total_epochs": total_epochs,
         "phase": phase_count,
     }
@@ -304,9 +304,10 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
                 # ic(stacked.shape)
                 # start = time.time()
                 sigma_rms = torch.pow(torch.mean(stacked.square(), dim=1), 0.5)
-                inv_sigma = torch.div(1, sigma_rms+1e-8)
+                inv_sigma = torch.div(1, sigma_rms + 1e-8)
                 phis = torch.div(inv_sigma, torch.sum(inv_sigma))
-                
+
+
                 # ic("time 1", time.time() - start)
                 # ic("Mean inv sigma", phis)
 
@@ -320,16 +321,29 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
             elif cfg.phi_method == "norm":
                 stacked = torch.stack(list(model_std.values()))
                 norm = stacked.norm(dim=1)
-                inv_norm = torch.div(1, norm+1e-8)
+                inv_norm = torch.div(1, norm + 1e-8)
                 phis = torch.div(inv_norm, torch.sum(inv_norm))
                 # ic("Norm inv sigmas", phis)
+
+                deltas_norm = torch.stack([torch.norm(parameters_to_vector(d)) for d in clients_deltas.values()])
+
+                # ic(norm)
+                # ic(inv_norm)
+                # ic(deltas_norm)
+                # ic(shard_sizes)
+                # ic(weights)
+
 
             elif cfg.phi_method == "per_parameter":
                 pass
             elif cfg.phi_method == "per_layer":
                 pass
-            elif cfg.phi_method == "":
-                pass
+            elif cfg.phi_method == "delta/sigma":
+                deltas_norm = torch.stack([torch.norm(parameters_to_vector(d)) for d in clients_deltas.values()])
+                stacked = torch.stack(list(model_std.values()))
+                sigma_norm = stacked.norm(dim=1)
+                delta_by_sigma = torch.div(deltas_norm, sigma_norm + 1e-8)
+                phis = torch.div(delta_by_sigma, torch.sum(delta_by_sigma))
             else:
                 raise ValueError("Invalid phi method")
 
@@ -354,12 +368,11 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
                 client.model.parameters(), global_model.parameters()
             ):
                 cparam.data.copy_(gparam.data)
-            
+
         for i, cid in enumerate(client_ids):
             metrics["weights"][cid] = weights[i].item()
             metrics["phis"][cid] = phis[i].item()
             metrics["rs"][cid] = rs[i].item()
-
 
         ### CLIENTS EVALUATE post aggregation###
         eval_ids = client_ids
@@ -396,7 +409,6 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
             save_checkpoint(curr_round, global_model, server_optimizer, "server")
 
         loop_end = time.time() - loop_start
-
 
         logger.info(
             f"------------ Round {curr_round} completed in time: {loop_end} ------------\n"

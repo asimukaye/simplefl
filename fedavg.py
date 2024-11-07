@@ -86,6 +86,7 @@ def simple_trainer(
 
     return {"loss": avg_loss, "accuracy": get_accuracy(all_outputs, all_targets)}
 
+
 def aggregate_metrics(metrics: dict | list):
     if isinstance(metrics, dict):
         m_list = list(metrics.values())
@@ -93,9 +94,10 @@ def aggregate_metrics(metrics: dict | list):
         m_list = metrics
     else:
         raise ValueError("Metrics should be either dict or list")
-    
+
     mean = np.mean(m_list)
     return mean
+
 
 def random_client_selection(sampling_fraction: float, cids: list[str]):
 
@@ -118,7 +120,7 @@ class Client:
 
         self.model = deepcopy(model)
         self.cid = cid
-        self.tr_cfg = train_cfg
+        self.tr_cfg = deepcopy(train_cfg)
         self.optimizer = self.tr_cfg.optim_partial(
             self.model.parameters(), lr=self.tr_cfg.lr
         )
