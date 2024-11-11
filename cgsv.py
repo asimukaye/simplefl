@@ -1,4 +1,5 @@
 from copy import deepcopy
+from dataclasses import dataclass
 import time
 import logging
 import math
@@ -31,10 +32,24 @@ from utils import (
 )
 from data import DatasetPair
 from split import get_client_datasets
-from config import TrainConfig, CGSVConfig
+# from config import TrainConfig, CGSVConfig
+from rootconfig import TrainConfig, Config
 from fedavg import simple_trainer, simple_evaluator
 
 logger = logging.getLogger(__name__)
+
+@dataclass
+class CGSVConfig(Config):
+    name: str = "cgsv"
+    beta: float = 1.0
+    alpha: float = 0.95
+    gamma: float = 0.15
+    use_reputation: bool = True
+    use_sparsify: bool = True
+    fedopt_debug: bool = False
+    normalize_delta: bool = True
+
+
 
 
 def compute_grad_update(old_model: Module, new_model: Module, device=None):

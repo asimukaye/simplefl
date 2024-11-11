@@ -11,7 +11,8 @@ from torchvision.datasets import CIFAR10, VisionDataset, CIFAR100
 from config import DatasetConfig, DATA_PATH
 
 
-class VisionClfDataset(Subset):
+# class VisionClfDataset(Subset):
+class VisionClfDataset(Dataset):
     def __init__(self, dataset, dataset_name):
         self.dataset = dataset
         self.dataset_name = dataset_name

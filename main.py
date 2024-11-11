@@ -22,10 +22,7 @@ from config import (
     compile_config,
     load_config,
     set_debug_config,
-    CGSVConfig,
     Config,
-    FHGConfig,
-    ShapfedConfig
 )
 from data import load_raw_dataset
 from model import init_model
@@ -121,8 +118,8 @@ def setup_logging(level=logging.INFO):
     # exit(0)
 
 
-def launch_experiment(strategy: str, cfg: Config, resume_from: str, debug: bool):
 
+def launch_experiment(strategy: str, cfg: Config, resume_from: str, debug: bool):
     start_time = time.time()
     set_seed(cfg.seed)
 
@@ -173,12 +170,12 @@ def launch_experiment(strategy: str, cfg: Config, resume_from: str, debug: bool)
 
             out = run_fedopt(dataset, model_instance, cfg)
         case "fedhigrad":
-            from fedhigrad import run_fedhigrad
+            from fedhigrad import run_fedhigrad, FHGConfig
 
             assert isinstance(cfg, FHGConfig)
             out = run_fedhigrad(dataset, model_instance, cfg)
         case "cgsv":
-            from cgsv import run_cgsv
+            from cgsv import run_cgsv, CGSVConfig
 
             assert isinstance(cfg, CGSVConfig)
             out = run_cgsv(dataset, model_instance, cfg)
@@ -193,7 +190,8 @@ def launch_experiment(strategy: str, cfg: Config, resume_from: str, debug: bool)
             assert isinstance(cfg, Config)
             out = run_standolone(dataset, model_instance, cfg)
         case "shapfed":
-            from shapfed import run_shapfed
+            from shapfed import run_shapfed, ShapfedConfig
+
 
             assert isinstance(cfg, ShapfedConfig)
             out = run_shapfed(dataset, model_instance, cfg)

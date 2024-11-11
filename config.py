@@ -2,236 +2,8 @@ from dataclasses import dataclass, field, asdict, MISSING
 import typing as t
 from functools import partial
 import yaml
-import torch
-from torch.nn import (
-    Module,
-    CrossEntropyLoss,
-    NLLLoss,
-    MSELoss,
-    L1Loss,
-    BCELoss,
-    BCEWithLogitsLoss,
-    CTCLoss,
-    KLDivLoss,
-    MultiMarginLoss,
-    SmoothL1Loss,
-    TripletMarginLoss,
-    CosineEmbeddingLoss,
-    PoissonNLLLoss,
-)
-from torch.optim import Optimizer, SGD, Adam, AdamW, Adadelta, Adagrad, RMSprop
-from torch.optim.lr_scheduler import (
-    LRScheduler,
-    StepLR,
-    MultiStepLR,
-    ExponentialLR,
-    CosineAnnealingLR,
-    ReduceLROnPlateau,
-    CyclicLR,
-    OneCycleLR,
-    CosineAnnealingWarmRestarts,
-)
 
-## Root level module. Should not have any dependencies on other modules except utils
-
-from utils import auto_configure_device
-
-OPTIMIZER_MAP = {
-    "adam": Adam,
-    "sgd": SGD,
-    "adamw": AdamW,
-    "adagrad": Adagrad,
-    "adadelta": Adadelta,
-    "rmsprop": RMSprop,
-}
-
-LRSCHEDULER_MAP = {
-    "step": StepLR,
-    "multistep": MultiStepLR,
-    "exponential": ExponentialLR,
-    "cosine": CosineAnnealingLR,
-    "plateau": ReduceLROnPlateau,
-    "cyclic": CyclicLR,
-    "onecycle": OneCycleLR,
-    "cosine_warmup": CosineAnnealingWarmRestarts,
-}
-
-LOSS_MAP = {
-    "crossentropy": CrossEntropyLoss,
-    "nll": NLLLoss,
-    "mse": MSELoss,
-    "l1": L1Loss,
-    "bce": BCELoss,
-    "bcelogits": BCEWithLogitsLoss,
-    "ctc": CTCLoss,
-    "kl": KLDivLoss,
-    "margin": MultiMarginLoss,
-    "smoothl1": SmoothL1Loss,
-    "huber": SmoothL1Loss,
-    "triplet": TripletMarginLoss,
-    "hinge": MultiMarginLoss,
-    "cosine": CosineEmbeddingLoss,
-    "poisson": PoissonNLLLoss,
-}
-
-SEED = 42
-DATA_PATH = "data"
-
-
-@dataclass
-class DatasetModelSpec:
-    num_classes: int
-    in_channels: int
-
-
-@dataclass
-class TrainConfig:
-    epochs: int = 1
-    lr: float = 0.01
-    batch_size: int = 128
-    eval_batch_size: int = 128
-    optimizer: str = "sgd"
-    loss_name: str = "crossentropy"
-    scheduler: str = "exponential"
-    lr_decay: float = 0.977
-    device: str = "auto"
-
-    def __post_init__(self):
-        if self.device == "auto":
-            self.device = auto_configure_device()
-        self.optim_partial: partial[Optimizer] = partial(
-            OPTIMIZER_MAP[self.optimizer], lr=self.lr
-        )
-        self.loss_fn: Module = LOSS_MAP[self.loss_name]()
-        if self.scheduler == "exponential":
-            self.scheduler_partial: partial[LRScheduler] = partial(
-                LRSCHEDULER_MAP[self.scheduler], gamma=self.lr_decay
-            )
-
-
-@dataclass
-class SplitConfig:
-    name: str
-    num_splits: int = 0  # should be equal to num_clients
-    # Train test split ratio within the client,
-    # Now this is auto determined by the test set size
-    # test_fractions: list[float] = field(init=False, default_factory=list)
-
-
-# IIDSplitConfig = SplitConfig
-# IIDSplitConfig.name = "iid"
-
-
-@dataclass
-class NoisyImageSplitConfig(SplitConfig):
-    name: str = "noisy_image"
-    num_noisy_clients: int = 1
-    noise_mu: float = 0.0
-    noise_sigma: float | list = 0.1
-
-
-@dataclass
-class NoisyLabelSplitConfig(SplitConfig):
-    name: str = "noisy_label"
-    num_noisy_clients: int = 1
-    noise_flip_percent: float = 0.1
-
-
-@dataclass
-class PathoSplitConfig(SplitConfig):
-    name: str = "patho"
-    num_class_per_client: int = 2
-
-
-@dataclass
-class DirichletSplitConfig(SplitConfig):
-    name: str = "dirichlet"
-    alpha: float = 1.0  # concentration parameter
-
-
-@dataclass
-class DataImbalanceSplitConfig(SplitConfig):
-    name: str = "data_imbalance"
-    num_imbalanced_clients: int = 1
-
-
-@dataclass
-class DatasetConfig:
-    name: str = "fast_cifar10"
-    seed: int = SEED
-    subsample_fraction: float = 1.0
-
-
-######### STRATEGY CONFIGS #########
-
-
-@dataclass
-class Config:
-    train: TrainConfig
-    dataset: DatasetConfig
-    split: SplitConfig
-    model: str = "rffl_cnn"
-    desc: str = ""
-    name: str = ""
-    num_clients: int = -1
-    num_rounds: int = -1
-    train_fraction: float = 1.0
-    eval_fraction: float = 1.0
-    seed: int = SEED
-    checkpoint_every: int = 20
-
-    def __post_init__(self):
-        ## Define internal config variables here
-        self.use_wandb = True
-        self.resumed = False
-        self.split.num_splits = self.num_clients
-
-
-@dataclass
-class CGSVConfig(Config):
-    name: str = "cgsv"
-    beta: float = 1.0
-    alpha: float = 0.95
-    gamma: float = 0.15
-    use_reputation: bool = True
-    use_sparsify: bool = True
-    fedopt_debug: bool = False
-    normalize_delta: bool = True
-
-
-@dataclass
-class ShapfedConfig(Config):
-    name: str = "shapfed"
-    alpha: float = 0.95
-    gamma: float = 0.15
-    compute_every: int = 1
-
-
-@dataclass
-class FHGConfig(Config):
-    name: str = "fedhigrad"
-    branches: list[int] = field(default_factory=lambda: [2, 2])
-    enable_weights: bool = True
-    alpha: float = 0.95
-    phi_method: str = "mean"
-
-
-SPLIT_MAP = {
-    "iid": SplitConfig,
-    "noisy_image": NoisyImageSplitConfig,
-    "noisy_label": NoisyLabelSplitConfig,
-    "dirichlet": DirichletSplitConfig,
-    "data_imbalance": DataImbalanceSplitConfig,
-    "patho": PathoSplitConfig,
-}
-CONFIG_MAP = {
-    "fedavg": Config,
-    "fedopt": Config,
-    "cgsv": CGSVConfig,
-    "rffl": CGSVConfig,
-    "fedhigrad": FHGConfig,
-    "centralized": Config,
-}
+from rootconfig import *
 
 
 def set_debug_config(cfg: Config) -> Config:
@@ -240,17 +12,20 @@ def set_debug_config(cfg: Config) -> Config:
     cfg.dataset.subsample_fraction = 0.05
     # cfg.dataset.subsample_fraction = 1.0
     cfg.train.epochs = 1
-    cfg.num_rounds = 10
+    cfg.num_rounds = 3
     return cfg
 
 
 def get_default_config(strategy: str) -> Config:
     return Config(
         TrainConfig(),
-        DatasetConfig(),
+        DatasetConfig(name="fast_cifar10"),
         SplitConfig(name="iid"),
         model="rffl_cnn",
         name=strategy,
+        num_clients=6,
+        num_rounds=500,
+        desc="Default config RFFL CNN, IID, fast CIFAR10",
     )
 
 
@@ -296,7 +71,7 @@ def get_standalone_config() -> Config:
         name="standalone",
         model="rffl_cnn",
         num_clients=6,
-        num_rounds=300,
+        num_rounds=500,
         seed=SEED,
         train=TrainConfig(
             epochs=1,
@@ -309,8 +84,9 @@ def get_standalone_config() -> Config:
             scheduler="exponential",
             lr_decay=0.977,
         ),
-        split=DirichletSplitConfig(alpha=0.05),
+        # split=DirichletSplitConfig(alpha=0.05),
         # split=NoisyImageSplitConfig(num_noisy_clients=3, noise_mu=0.0, noise_sigma=3.0),
+        split=NoisyLabelSplitConfig(num_noisy_clients=3, noise_flip_percent=0.2),
         # split=NoisyImageSplitConfig(num_noisy_clients=5, noise_mu=0.0, noise_sigma=[2.5, 2.0, 1.5, 1.0, 0.5]),
         # split=SplitConfig(name="iid"),
         dataset=DatasetConfig(
@@ -320,7 +96,7 @@ def get_standalone_config() -> Config:
         ),
     )
 
-    cfg.desc = f"Standalone run on fast cifar10, dirichlet"
+    cfg.desc = f"Standalone run on fast cifar10, noisy label reference"
     return cfg
 
 
@@ -345,8 +121,9 @@ def get_fedavg_config() -> Config:
             scheduler="exponential",
             lr_decay=0.977,
         ),
-        split=DirichletSplitConfig(alpha=0.05),
+        # split=DirichletSplitConfig(alpha=0.05),
         # split=NoisyImageSplitConfig(num_noisy_clients=3, noise_mu=0.0, noise_sigma=3.0),
+        split=NoisyLabelSplitConfig(num_noisy_clients=2, noise_flip_percent=0.1),
         # split=NoisyImageSplitConfig(
         #     num_noisy_clients=5, noise_mu=0.0, noise_sigma=[2.5, 2.0, 1.5, 1.0, 0.5]
         # ),
@@ -359,7 +136,8 @@ def get_fedavg_config() -> Config:
     # cfg.desc = "FedAvg on fast cifar10 iid, twocnn"
     # cfg.desc = "FedAvg on fast cifar10 iid, fednet"
     # cfg.desc = "FedAvg on fast cifar10 iid, twocnnv2"
-    cfg.desc = "FedAvg on fast cifar10 iid, rffl_cnn, dirichlet 0.05"
+    # cfg.desc = "FedAvg on fast cifar10 iid, rffl_cnn, dirichlet 0.05"
+    # cfg.desc = "FedAvg on label flip noie"
     # cfg.desc = (
     #     "FedAvg on fast cifar10 varying noise, mu=0.0, sigma=[2.5, 2.0, 1.5, 1.0, 0.5]"
     # )
@@ -394,10 +172,13 @@ def get_fedopt_config() -> Config:
             subsample_fraction=1.0,
         ),
     )
-    cfg.desc="FedOpt on fast CIFAR10, Dirichlet split"
+    cfg.desc = "FedOpt on fast CIFAR10, Dirichlet split"
     # cfg.desc = "FedOpt on fast CIFAR10, IID, modified to add deltas to clients"
 
     return cfg
+
+
+from cgsv import CGSVConfig
 
 
 def get_cgsv_config() -> CGSVConfig:
@@ -427,6 +208,7 @@ def get_cgsv_config() -> CGSVConfig:
         ),
         # split=DirichletSplitConfig(alpha=0.1),
         # split=NoisyImageSplitConfig(num_noisy_clients=3, noise_mu=0.0, noise_sigma=3.0),
+        # split=NoisyLabelSplitConfig(num_noisy_clients=2, noise_flip_percent=0.1),
         split=NoisyImageSplitConfig(
             num_noisy_clients=5, noise_mu=0.0, noise_sigma=[2.5, 2.0, 1.5, 1.0, 0.5]
         ),
@@ -439,7 +221,7 @@ def get_cgsv_config() -> CGSVConfig:
     # cfg.desc = (
     # f"CGSV on CIFAR10, Noisy Image split 3 Noise, mu=0.0, sigma=3.0, as is in paper"
     # )
-    
+
     cfg.desc = (
         "CGSV on fast cifar10 varying noise, mu=0.0, sigma=[2.5, 2.0, 1.5, 1.0, 0.5]"
     )
@@ -449,6 +231,9 @@ def get_cgsv_config() -> CGSVConfig:
     # cfg.desc = f"CGSV on CIFAR10 IID, sweep gama={cfg.gamma}"
     # cfg.desc = f"CGSV on fast CIFAR10 IID, use reputation but no sparsify"
     return cfg
+
+
+from shapfed import ShapfedConfig
 
 
 def get_shapfed_config() -> ShapfedConfig:
@@ -483,11 +268,14 @@ def get_shapfed_config() -> ShapfedConfig:
         ),
     )
     cfg.desc = f"shapfed on fast cifar10 with iid split"
-    cfg.desc = (
-        "Shapfed on fast cifar10 varying noise, mu=0.0, sigma=[2.5, 2.0, 1.5, 1.0, 0.5]"
-    )
+    # cfg.desc = (
+    #     "Shapfed on fast cifar10 varying noise, mu=0.0, sigma=[2.5, 2.0, 1.5, 1.0, 0.5]"
+    # )
 
     return cfg
+
+
+from fedhigrad import FHGConfig
 
 
 def get_fedhigrad_config() -> FHGConfig:
@@ -499,12 +287,17 @@ def get_fedhigrad_config() -> FHGConfig:
         enable_weights=True,
         branches=[4],
         alpha=0.95,
+        aggregate=True,
+        sigma_floor=0.01,
+        beta=0.4,
         # phi_method="norm",
-        phi_method="delta/sigma",
+        # phi_method="delta/sigma",
+        # phi_method="delta/sigma_delta",
+        phi_method="delta+sigma",
         seed=SEED,
         train=TrainConfig(
             epochs=1,
-            lr=0.05,
+            lr=0.01,
             batch_size=128,
             eval_batch_size=128,
             device="auto",
@@ -513,12 +306,12 @@ def get_fedhigrad_config() -> FHGConfig:
             scheduler="exponential",
             lr_decay=0.977,
         ),
-        split=DirichletSplitConfig(name="dirichlet", alpha=0.01),
-        # split=NoisyImageSplitConfig(num_noisy_clients=3, noise_mu=0.0, noise_sigma=1.0),
+        # split=DirichletSplitConfig(name="dirichlet", alpha=0.01),
+        # # split=NoisyImageSplitConfig(num_noisy_clients=3, noise_mu=0.0, noise_sigma=1.0),
         # split=NoisyImageSplitConfig(
         #     num_noisy_clients=5, noise_mu=0.0, noise_sigma=[2.5, 2.0, 1.5, 1.0, 0.5]
         # ),
-        # split=NoisyLabelSplitConfig(num_noisy_clients=2, noise_flip_percent=0.1),
+        split=NoisyLabelSplitConfig(num_noisy_clients=3, noise_flip_percent=0.2),
         # split=SplitConfig(name="iid"),
         dataset=DatasetConfig(
             name="fast_cifar10",
@@ -527,10 +320,41 @@ def get_fedhigrad_config() -> FHGConfig:
         ),
     )
     # cfg.desc = f"Fedhigrad on fast CIFAR10, [2, 2], Noisy Image split"
-    # cfg.desc = f"Fedhigrad on fast CIFAR10, Noisy Image split sweep
-    # cfg.desc = "Fedhigrad on fast cifar10 varying noise, mu=0.0, sigma=[2.5, 2.0, 1.5, 1.0, 0.5]"
-    cfg.desc = "Fedhigrad on fast cifar10, [4], dirichlet split 0.01, delta/sigma"
+    cfg.desc = f"Fedhigrad on fast CIFAR10, noisy label, phi delta + inv sigma"
+    # cfg.desc = "Fedhigrad on fast cifar10 varying noise sigma=[2.5, 2.0, 1.5, 1.0, 0.5], delta+invsigma"
+    # cfg.desc = "Fedhigrad on fast cifar10, [4], dirichlet split 0.01, delta/sigma"
+    # cfg.desc = "Fedhigrad on fast cifar10, [4], dirichle, delta/ sigma"
+    # cfg.desc = "Fedhigrad on fast cifar10, [4], dirichlet, delta/del_sigma"
+    # cfg.desc = "Fedhigrad on fast cifar10, [4], dirichlet, delta+sigma"
     return cfg
+
+
+SPLIT_MAP = {
+    "iid": SplitConfig,
+    "noisy_image": NoisyImageSplitConfig,
+    "noisy_label": NoisyLabelSplitConfig,
+    "dirichlet": DirichletSplitConfig,
+    "data_imbalance": DataImbalanceSplitConfig,
+    "patho": PathoSplitConfig,
+}
+CONFIG_MAP = {
+    "fedavg": Config,
+    "fedopt": Config,
+    "cgsv": CGSVConfig,
+    "rffl": CGSVConfig,
+    "fedhigrad": FHGConfig,
+    "centralized": Config,
+}
+
+CONFIG_FN_MAP = {
+    "fedavg": get_fedavg_config,
+    "fedopt": get_fedopt_config,
+    "cgsv": get_cgsv_config,
+    "fedhigrad": get_fedhigrad_config,
+    "centralized": get_centralized_config,
+    "standalone": get_standalone_config,
+    "shapfed": get_shapfed_config,
+}
 
 
 def load_config(cfg_dir: str) -> Config:

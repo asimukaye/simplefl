@@ -1,4 +1,5 @@
 from copy import deepcopy
+from dataclasses import dataclass, field
 import time
 import logging
 import random
@@ -25,12 +26,22 @@ from utils import (
 )
 from data import DatasetPair
 from split import get_client_datasets
-from config import TrainConfig, FHGConfig
+from rootconfig import TrainConfig, Config
 from fedavg import simple_evaluator, simple_trainer
 from cgsv import flatten, unflatten
 
 logger = logging.getLogger(__name__)
 
+@dataclass
+class FHGConfig(Config):
+    name: str = "fedhigrad"
+    branches: list[int] = field(default_factory=lambda: [2, 2])
+    enable_weights: bool = True
+    alpha: float = 0.95
+    phi_method: str = "mean"
+    aggregate: bool = True
+    sigma_floor: float = 0.01
+    beta: float = 0.5
 
 def model_mean_std(
     target_model: Module, input_models: list[Module]
@@ -44,6 +55,23 @@ def model_mean_std(
     vector_to_parameters(flat_mean, target_model.parameters())
     return target_model, flat_std
 
+def delta_mean_std(
+    og_model: Module, input_models: list[Module]
+) -> tuple[Module, Tensor, Tensor]:
+    flat_og_model = parameters_to_vector(og_model.parameters())
+
+    flat_list = []
+    for inmodel in input_models:
+        flat_model = parameters_to_vector(inmodel.parameters())
+        # flat_og_model = parameters_to_vector(prev_model.parameters())
+        flat_delta = flat_model - flat_og_model
+        flat_list.append(flat_delta)
+    
+    flat_std, flat_mean = torch.std_mean(torch.stack(flat_list), dim=0)
+    flat_og_model.add_(flat_mean)
+    vector_to_parameters(flat_og_model, og_model.parameters())
+
+    return og_model, flat_mean, flat_std
 
 class FHGClient:
     def __init__(
@@ -76,7 +104,7 @@ class FHGClient:
         self.branches = branches
         self.start_epoch = 0
 
-    def train(self, _round: int) -> tuple[dict, Tensor]:
+    def train(self, _round: int, ret_delta_sigma = False):
 
         results = {}
 
@@ -112,9 +140,24 @@ class FHGClient:
             # logger.info(f"TRAIN {epoch}: {result}")
             results[branch_level] = result
 
-        self.model, self.flat_model_std = model_mean_std(self.model, new_models)
+        if ret_delta_sigma:
+            # flat_model = parameters_to_vector(self.model.parameters())
+            self.model, flat_delta_mean, flat_delta_std = delta_mean_std(self.model, new_models)
+      
+            # test_model = deepcopy(self.model)
+            # flat_test_model = parameters_to_vector(test_model.parameters())
+            # flat_test_model.add_(delta_model)
 
-        return results, self.flat_model_std
+
+            # avg_model, self.flat_model_std = model_mean_std(self.model, new_models)
+            # flat_avg_model = parameters_to_vector(avg_model.parameters())
+            # ic(flat_avg_model.shape, flat_test_model.shape)
+            # ic((flat_avg_model-flat_test_model).norm())
+            # assert flat_avg_model == flat_test_model
+            return results, flat_delta_std, flat_delta_mean
+        else:
+            self.model, self.flat_model_std = model_mean_std(self.model, new_models)
+            return results, self.flat_model_std
 
     def evaluate(self):
         result = simple_evaluator(self.model, self.test_loader, self.tr_cfg)
@@ -176,6 +219,9 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
         global_model.parameters(), lr=cfg.train.lr
     )
 
+    if not cfg.aggregate:
+        backups = {cid: deepcopy(clients[cid].model) for cid in client_ids}
+
     server_scheduler = cfg.train.scheduler_partial(server_optimizer)
 
     # Fedavg weights
@@ -197,6 +243,8 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
     # rs = torch.zeros(cfg.num_clients, device=cfg.train.device)
     rs = torch.clone(weights)
     phis = torch.zeros_like(rs)
+    deltas_norm = torch.zeros_like(rs)
+    phis = torch.zeros_like(rs)
 
     # Define metrics to log
 
@@ -207,8 +255,11 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
         "weights": {},
         "phis": {},
         "rs": {},
-        "sigmas": {},
-        "sigma_by_mu": {},
+        "sigma": {},
+        "del_sigma": {},
+        "rel_delta": {},
+        "psi": {},
+        "theta": {},
         "delta": {},
         "total_epochs": total_epochs,
         "phase": phase_count,
@@ -229,10 +280,18 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
         # select all clients
         train_ids = client_ids
 
+        if not cfg.aggregate:
+            backups = {cid: deepcopy(clients[cid].model) for cid in client_ids}
+
         train_results = {}
         model_std = {}
+        model_deltas = {}
         for cid in train_ids:
-            train_results[cid], model_std[cid] = clients[cid].train(curr_round)
+            if cfg.phi_method == "delta/sigma_delta":
+                #  model std will have del sigma in this mode
+                train_results[cid], model_std[cid], model_deltas[cid] = clients[cid].train(curr_round, ret_delta_sigma=True)
+            else:
+                train_results[cid], model_std[cid] = clients[cid].train(curr_round)
 
         for epoch in range(cfg.train.epochs):
             for cid in train_ids:
@@ -282,16 +341,28 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
         #### AGGREGATE ####
 
         clients_deltas: dict[str, list[Tensor]] = {}
+        clients_deltas_flat: dict[str, Tensor] = {}
+        if cfg.aggregate:
+            for cid, client in clients.items():
+                cdelta = []
+                for cparam, gparam in zip(
+                    client.model.parameters(), global_model.parameters()
+                ):
+                    delta = cparam.data - gparam.data
+                    cdelta.append(delta)
+                clients_deltas_flat[cid] = parameters_to_vector(cdelta)
+                clients_deltas[cid] = cdelta
+        else:
+            for cid, client in clients.items():
+                cdelta = []
+                for cparam, gparam in zip(
+                    client.model.parameters(), backups[cid].parameters()
+                ):
+                    delta = cparam.data - gparam.data
+                    cdelta.append(delta)
+                clients_deltas_flat[cid] = parameters_to_vector(cdelta)
+                clients_deltas[cid] = cdelta
 
-        for cid, client in clients.items():
-            cdelta = []
-            for cparam, gparam in zip(
-                client.model.parameters(), global_model.parameters()
-            ):
-                delta = cparam.data - gparam.data
-                cdelta.append(delta)
-
-            clients_deltas[cid] = cdelta
 
         if cfg.enable_weights:
             if curr_round == 0:
@@ -321,7 +392,7 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
             elif cfg.phi_method == "norm":
                 stacked = torch.stack(list(model_std.values()))
                 norm = stacked.norm(dim=1)
-                inv_norm = torch.div(1, norm + 1e-8)
+                inv_norm = torch.div(1, norm + cfg.sigma_floor)
                 phis = torch.div(inv_norm, torch.sum(inv_norm))
                 # ic("Norm inv sigmas", phis)
 
@@ -333,17 +404,47 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
                 # ic(shard_sizes)
                 # ic(weights)
 
-
-            elif cfg.phi_method == "per_parameter":
-                pass
-            elif cfg.phi_method == "per_layer":
-                pass
             elif cfg.phi_method == "delta/sigma":
-                deltas_norm = torch.stack([torch.norm(parameters_to_vector(d)) for d in clients_deltas.values()])
-                stacked = torch.stack(list(model_std.values()))
-                sigma_norm = stacked.norm(dim=1)
-                delta_by_sigma = torch.div(deltas_norm, sigma_norm + 1e-8)
+                # deltas_norm = torch.stack([torch.norm(parameters_to_vector(d)) for d in clients_deltas.values()])
+                deltas_norm = torch.stack([torch.norm(d) for d in clients_deltas_flat.values()])
+                relative_deltas = torch.div(deltas_norm, deltas_norm.sum())
+
+                sigma_stacked = torch.stack(list(model_std.values()))
+                sigma_norm = sigma_stacked.norm(dim=1)
+                delta_by_sigma = torch.div(deltas_norm, sigma_norm + cfg.sigma_floor)
                 phis = torch.div(delta_by_sigma, torch.sum(delta_by_sigma))
+                for i, cid in enumerate(client_ids):
+                    metrics["sigma"][cid] = sigma_norm[i].item()
+                    metrics["delta"][cid] = deltas_norm[i].item()
+                    metrics["rel_delta"][cid] = relative_deltas[i].item()
+            elif cfg.phi_method == "delta/sigma_delta":
+                deltas_norm = torch.stack([torch.norm(d) for d in clients_deltas_flat.values()])
+                relative_deltas = torch.div(deltas_norm, deltas_norm.sum())
+                #  model std will have del sigma in this mode
+                sigma_stacked = torch.stack(list(model_std.values()))
+                sigma_norm = sigma_stacked.norm(dim=1)
+                delta_by_sigma = torch.div(deltas_norm, sigma_norm + cfg.sigma_floor)
+                phis = torch.div(delta_by_sigma, torch.sum(delta_by_sigma))
+                for i, cid in enumerate(client_ids):
+                    metrics["del_sigma"][cid] = sigma_norm[i].item()
+                    metrics["delta"][cid] = deltas_norm[i].item()
+                    metrics["rel_delta"][cid] = relative_deltas[i].item()
+                    # ic("Delta sigma", sigma_norm[i].item())
+
+            elif cfg.phi_method == "delta+sigma":
+                deltas_norm = torch.stack([torch.norm(d) for d in clients_deltas_flat.values()])
+                sigma_stacked = torch.stack(list(model_std.values()))
+                sigma_norm = sigma_stacked.norm(dim=1)
+                inv_sigma = torch.div(1, sigma_norm + cfg.sigma_floor)
+                psi = torch.div(inv_sigma, torch.sum(inv_sigma))
+
+                theta = torch.div(deltas_norm, torch.sum(deltas_norm))
+                phis = cfg.beta * psi + (1 - cfg.beta) * theta
+                for i, cid in enumerate(client_ids):
+                    metrics["sigma"][cid] = sigma_norm[i].item()
+                    metrics["delta"][cid] = deltas_norm[i].item()
+                    metrics["psi"][cid] = psi[i].item()
+                    metrics["theta"][cid] = theta[i].item()
             else:
                 raise ValueError("Invalid phi method")
 
@@ -351,23 +452,20 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
             rs = torch.div(rs, rs.sum())
 
             # ic("RS", rs)
+        if cfg.aggregate:
+            for k, gparam in enumerate(global_model.parameters()):
+                temp_delta = torch.zeros_like(gparam.data)
+                # for deltas in clients_deltas.values():
+                for c, deltas in enumerate(clients_deltas.values()):
+                    temp_delta.add_(weights[c] * deltas[k].data)
+                gparam.data.add_(temp_delta)
 
-        for k, gparam in enumerate(global_model.parameters()):
-            temp_delta = torch.zeros_like(gparam.data)
-            # for deltas in clients_deltas.values():
-            for c, deltas in enumerate(clients_deltas.values()):
-                temp_delta.add_(weights[c] * deltas[k].data)
-            gparam.data.add_(temp_delta)
-
-        # server_optimizer.step()
-        # server_scheduler.step()
-
-        ### send the global model to all clients
-        for cid, client in clients.items():
-            for cparam, gparam in zip(
-                client.model.parameters(), global_model.parameters()
-            ):
-                cparam.data.copy_(gparam.data)
+            ### send the global model to all clients
+            for cid, client in clients.items():
+                for cparam, gparam in zip(
+                    client.model.parameters(), global_model.parameters()
+                ):
+                    cparam.data.copy_(gparam.data)
 
         for i, cid in enumerate(client_ids):
             metrics["weights"][cid] = weights[i].item()

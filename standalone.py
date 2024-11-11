@@ -24,7 +24,7 @@ from utils import (
 )
 from data import DatasetPair
 from split import get_client_datasets
-from config import TrainConfig, Config
+from rootconfig import TrainConfig, Config
 from fedavg import simple_trainer, simple_evaluator
 
 logger = logging.getLogger(__name__)

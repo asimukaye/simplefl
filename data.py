@@ -49,6 +49,9 @@ def load_raw_dataset(cfg: DatasetConfig) -> tuple[DatasetPair, DatasetModelSpec]
 
         train = get_subset(train, cfg.subsample_fraction)
         test = get_subset(test, cfg.subsample_fraction)
+    else:
+        train = Subset(train, np.arange(len(train))) # type: ignore
+        test = Subset(test, np.arange(len(test))) # type: ignore
 
     return DatasetPair(train=train, test=test), model_spec
 

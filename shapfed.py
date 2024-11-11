@@ -1,4 +1,5 @@
 from copy import deepcopy
+from dataclasses import dataclass
 import time
 import logging
 import random
@@ -9,7 +10,7 @@ import torch
 import numpy as np
 from torch import Tensor
 from torch.utils.data import DataLoader, Subset
-from torch.nn import Module, CrossEntropyLoss
+from torch.nn import Module, CrossEntropyLoss, Parameter
 from torch.optim import Optimizer
 from torch.nn import functional as F
 from tqdm import tqdm
@@ -26,12 +27,20 @@ from utils import (
 )
 from data import DatasetPair
 from split import get_client_datasets
-from config import TrainConfig, ShapfedConfig
+from rootconfig import TrainConfig, Config
 from fedavg import simple_evaluator, simple_trainer
 
 # from sklearn.metrics import accuracy_score
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ShapfedConfig(Config):
+    name: str = "shapfed"
+    alpha: float = 0.95
+    gamma: float = 0.15
+    compute_every: int = 1
 
 
 class ShapfedClient:
@@ -45,6 +54,7 @@ class ShapfedClient:
         self.dataset = dataset
 
         self.model = deepcopy(model)
+        self.model.to(train_cfg.device)
         self.cid = cid
         self.client_id = int(cid)
         self.tr_cfg = deepcopy(train_cfg)
@@ -62,6 +72,7 @@ class ShapfedClient:
         self.start_epoch = 0
 
     def train(self, _round: int) -> dict:
+        initial_weights = deepcopy(self.get_weights())
 
         results = {}
         for epoch in range(self.tr_cfg.epochs):
@@ -76,6 +87,9 @@ class ShapfedClient:
                 )
             # logger.info(f"TRAIN {epoch}: {result}")
             results[epoch] = result
+
+        final_weights = self.get_weights()
+        self.compute_full_grad(initial_weights, final_weights)
 
         return results
 
@@ -92,7 +106,7 @@ class ShapfedClient:
         # _round = checkpoint["round"]
         self.start_epoch = checkpoint["epoch"]
 
-    def get_weights(self):
+    def get_weights(self) -> dict[str, Parameter]:
         return self.model.state_dict()
 
     def set_weights(self, weights):
@@ -111,9 +125,11 @@ class ShapfedClient:
 
 # Server Class
 class Server:
-    def __init__(self, clients: list[ShapfedClient], model: Module):
-        self.model = deepcopy(model)
+    def __init__(self, clients: list[ShapfedClient], model: Module, tcfg: TrainConfig):
+        self.model = model
+        self.model.to(tcfg.device)
         self.clients = clients
+        self.tcfg = tcfg
 
         self.stored_grads = None
 
@@ -184,7 +200,7 @@ class Server:
 
         with torch.no_grad():
             for data, target in dataloader:
-                data, target = data.cuda(), target.cuda()
+                data, target = data.to(self.tcfg.device), target.to(self.tcfg.device)
                 output = self.model(data)
                 _, predicted = torch.max(output.data, 1)
                 total += target.size(0)
@@ -198,11 +214,16 @@ class Server:
 
 def compute_cssv_cifar(clients: list[ShapfedClient], weights, original_model: Module):
     n = len(clients)
+    tcfg = deepcopy(clients[0].tr_cfg)
     num_classes = 10  # clients[0].model.state_dict()['linear.weight'].shape[0]
     similarity_matrix = torch.zeros((n, num_classes))  # One similarity value per class
 
-    weight_layer_name = "linear.weight"
-    bias_layer_name = "linear.bias"
+    # weight_layer_name = "linear.weight"
+    # bias_layer_name = "linear.bias"
+
+    weight_layer_name = "fc3.weight"
+    bias_layer_name = "fc3.bias"
+
     subsets = [subset for subset in combinations(range(n), n)]
     for subset in subsets:
         # Create a temporary server for this subset
@@ -211,7 +232,7 @@ def compute_cssv_cifar(clients: list[ShapfedClient], weights, original_model: Mo
         # normalized_curr_weights = softmax(curr_weights)  # curr_weights / np.sum(curr_weights)
         normalized_curr_weights = curr_weights / np.sum(curr_weights)
 
-        temp_server = Server(subset_clients, original_model)
+        temp_server = Server(subset_clients, original_model, tcfg=tcfg)
         temp_server.aggregate(coefficients=normalized_curr_weights)
         temp_server.aggregate_gradients(coefficients=normalized_curr_weights)
 
@@ -223,6 +244,7 @@ def compute_cssv_cifar(clients: list[ShapfedClient], weights, original_model: Mo
                     temp_server.stored_grads[bias_layer_name][cls_id].view(-1),
                 ]
             ).view(1, -1)
+
             w1_grad = F.normalize(w1_grad, p=2)
 
             for client_id in range(len(subset)):
@@ -256,7 +278,7 @@ def run_shapfed(dataset: DatasetPair, model: Module, cfg: ShapfedConfig):
     client_ids = generate_client_ids(cfg.num_clients)
 
     client_datasets = get_client_datasets(cfg.split, dataset)
-
+    shapley_values = None
     mu = 0.5
     ## Create Clients
     # clients: dict[str, ShapfedClient] = {}
@@ -306,8 +328,7 @@ def run_shapfed(dataset: DatasetPair, model: Module, cfg: ShapfedConfig):
     )
     server_scheduler = cfg.train.scheduler_partial(server_optimizer)
 
-
-    server = Server(clients, global_model)
+    server = Server(clients, global_model, tcfg=cfg.train)
     # Fedavg weights
     # data_sizes = [clients[cid].data_size for cid in client_ids]
     data_sizes = [client.data_size for client in clients]
@@ -398,19 +419,19 @@ def run_shapfed(dataset: DatasetPair, model: Module, cfg: ShapfedConfig):
 
         #### AGGREGATE ####
 
-        clients_deltas: dict[str, list[Tensor]] = {}
+        # clients_deltas: dict[str, list[Tensor]] = {}
 
-        for cid, client in zip(client_ids, clients):
-            cdelta = []
-            for cparam, gparam in zip(
-                client.model.parameters(), global_model.parameters()
-            ):
-                delta = cparam.data - gparam.data
-                cdelta.append(delta)
+        # for cid, client in zip(client_ids, clients):
+        #     cdelta = []
+        #     for cparam, gparam in zip(
+        #         client.model.parameters(), global_model.parameters()
+        #     ):
+        #         delta = cparam.data - gparam.data
+        #         cdelta.append(delta)
 
-            clients_deltas[cid] = cdelta
+        #     clients_deltas[cid] = cdelta
 
-            ##  Testing
+        ##  Testing
 
         # aggregated_delta = [
         #         torch.zeros(param.shape).to(cfg.train.device)
@@ -420,7 +441,7 @@ def run_shapfed(dataset: DatasetPair, model: Module, cfg: ShapfedConfig):
         if curr_round % cfg.compute_every == 0:  # every round
             # Compute Shapley values for each client every 5 rounds [to be efficient]
             temp_shapley_values, temp_class_shapley_values = compute_cssv_cifar(
-                clients, weights, model
+                clients, weights, global_model
             )
             if shapley_values is None:
                 shapley_values = np.array(temp_shapley_values)
@@ -441,14 +462,12 @@ def run_shapfed(dataset: DatasetPair, model: Module, cfg: ShapfedConfig):
         print(class_shapley_values)
 
         weights = normalized_shapley_values
-        server.aggregate(coefficients = weights)
-        
-        # if one wants to allow the highest-contribution participant to receive full update 
+        server.aggregate(coefficients=weights)
+
+        # if one wants to allow the highest-contribution participant to receive full update
         # server.broadcast(coefficients = broadcast_normalized_shapley_values)
 
-        server.broadcast(coefficients = weights)
-
-  
+        server.broadcast(coefficients=weights)
 
         ### CLIENTS EVALUATE post aggregation###
         eval_ids = client_ids
