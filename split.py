@@ -13,7 +13,8 @@ from config import (
     DirichletSplitConfig,
 )
 
-from data import DatasetPair
+from data import DatasetPair, DATA_PATH
+
 from splits.imbalanced import get_imbalanced_split, get_one_imbalanced_client_split
 from splits.pathological import pathological_non_iid_split
 from splits.noisy import NoisySubset, LabelNoiseSubset
@@ -68,6 +69,7 @@ def get_split_map(cfg: SplitConfig, dataset: Subset) -> dict[int, np.ndarray]:
             split_map = dirichlet_noniid_split(dataset, cfg.num_splits, cfg.alpha)
             return split_map
         case "natural":
+
             logger.info("[DATA_SPLIT] Using pre-defined split.")
             raise NotImplementedError
         case _:
@@ -145,28 +147,40 @@ def get_client_datasets(
     dataset: DatasetPair,
     match_train_distribution=False,
 ) -> list[DatasetPair]:
+    
     # logger.info(f'[DATA_SPLIT] dataset split: `{cfg.split_type.upper()}`')
-    split_map = get_split_map(cfg, dataset.train)
-    if match_train_distribution:
-        test_split_map = get_split_map(cfg, dataset.test)
+    if cfg.name == 'natural':
+        if cfg.dataset_name == 'fedisic':
+            from fldatasets.flamby import fetch_flamby_federated
+            # ic(DATA_PATH)
+            client_datasets, _ = fetch_flamby_federated(cfg.dataset_name, '/home/asim.ukaye/fed_learning/simplefl/data', cfg.num_splits)
+        else:
+            raise NotImplementedError
     else:
-        test_split_map = get_iid_split(dataset.test, cfg.num_splits)
+        split_map = get_split_map(cfg, dataset.train)
 
-    assert len(split_map) == len(
-        test_split_map
-    ), "Train and test split maps should be of same length"
-    logger.info(f"[DATA_SPLIT] Simulated dataset split : `{cfg.name.upper()}`")
+        if match_train_distribution:
+            test_split_map = get_split_map(cfg, dataset.test)
+        else:
+            test_split_map = get_iid_split(dataset.test, cfg.num_splits)
 
-    # construct client datasets if None
-    # cfg.test_fractions = []
-    client_datasets = []
-    for idx, train_indices in enumerate(split_map.values()):
+        assert len(split_map) == len(
+            test_split_map
+        ), "Train and test split maps should be of same length"
+        
+        logger.info(f"[DATA_SPLIT] Simulated dataset split : `{cfg.name.upper()}`")
 
-        train_set, test_set = _construct_client_dataset(
-            dataset.train, dataset.test, train_indices, test_indices=test_split_map[idx]
-        )
-        # cfg.test_fractions.append(len(test_set) / len(train_set))
-        client_datasets.append(DatasetPair(train_set, test_set))
+        # construct client datasets if None
+        # cfg.test_fractions = []
+        client_datasets = []
+        for idx, train_indices in enumerate(split_map.values()):
+
+            train_set, test_set = _construct_client_dataset(
+                dataset.train, dataset.test, train_indices, test_indices=test_split_map[idx]
+            )
+            # cfg.test_fractions.append(len(test_set) / len(train_set))
+            client_datasets.append(DatasetPair(train_set, test_set))
+
 
     match cfg.name:
         case "noisy_image":

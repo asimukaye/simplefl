@@ -6,8 +6,8 @@ import inspect
 import logging
 import importlib
 import torch.nn.functional as F
+from torchvision.models import resnet18, resnet34
 logger = logging.getLogger(__name__)
-
 
 # Taken from FedFisher for CIFAR10
 class FedNet(nn.Module):
@@ -42,9 +42,14 @@ class RFFL_CNN(nn.Module):
         self.fc3 = nn.Linear(84, num_classes)
 
     def forward(self, x):
+        # ic(x.shape)
         x = self.pool(F.relu(self.conv1(x)))
+        # ic(x.shape)
         x = self.pool(F.relu(self.conv2(x)))
-        x = x.view(-1, 16 * 5 * 5)
+        # ic(x.shape)
+        x = x.view(x.size(0), -1)
+
+        # x = x.view(-1, 16 * 5 * 5)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
@@ -241,6 +246,7 @@ MODEL_MAP = {
     "resnet18": ResNet18,
     "resnet34": ResNet34,
     "rffl_cnn": RFFL_CNN,
+    "mlpnet": MLP_Net,
 }
 
 

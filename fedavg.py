@@ -180,12 +180,12 @@ def run_fedavg(dataset: DatasetPair, model: Module, cfg: Config):
     ## Create Clients
     clients: dict[str, Client] = {}
     # NOTE: IMPORTANT Sharing models without deepcopy could potentially have same references to parameters
-    for cid, dataset in zip(client_ids, client_datasets):
+    for cid, cset in zip(client_ids, client_datasets):
         clients[cid] = Client(
             train_cfg=cfg.train,
             cid=cid,
-            dataset=dataset,
-            model=deepcopy(model),
+            dataset=cset,
+            model=deepcopy(model)
         )
 
     if cfg.resumed:

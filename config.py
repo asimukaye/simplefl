@@ -86,7 +86,11 @@ def get_standalone_config() -> Config:
         ),
         # split=DirichletSplitConfig(alpha=0.05),
         # split=NoisyImageSplitConfig(num_noisy_clients=3, noise_mu=0.0, noise_sigma=3.0),
-        split=NoisyLabelSplitConfig(num_noisy_clients=3, noise_flip_percent=0.2),
+        # split=NoisyLabelSplitConfig(num_noisy_clients=3, noise_flip_percent=0.2),
+        split=NoisyLabelSplitConfig(
+            num_noisy_clients=5, noise_flip_percent=[0.25, 0.2, 0.15, 0.1, 0.05]
+        ),
+        
         # split=NoisyImageSplitConfig(num_noisy_clients=5, noise_mu=0.0, noise_sigma=[2.5, 2.0, 1.5, 1.0, 0.5]),
         # split=SplitConfig(name="iid"),
         dataset=DatasetConfig(
@@ -96,7 +100,7 @@ def get_standalone_config() -> Config:
         ),
     )
 
-    cfg.desc = f"Standalone run on fast cifar10, noisy label reference"
+    cfg.desc = f"Standalone run on fast cifar10, varying noisy label"
     return cfg
 
 
@@ -105,6 +109,7 @@ def get_fedavg_config() -> Config:
         name="fedavg",
         model="rffl_cnn",
         # model="twocnn",
+        # model="twocnnv2",
         # model="twocnnv2",
         # model="fednet",
         num_clients=6,
@@ -123,13 +128,19 @@ def get_fedavg_config() -> Config:
         ),
         # split=DirichletSplitConfig(alpha=0.05),
         # split=NoisyImageSplitConfig(num_noisy_clients=3, noise_mu=0.0, noise_sigma=3.0),
-        split=NoisyLabelSplitConfig(num_noisy_clients=2, noise_flip_percent=0.1),
+        # split=NoisyLabelSplitConfig(num_noisy_clients=2, noise_flip_percent=0.1),
         # split=NoisyImageSplitConfig(
         #     num_noisy_clients=5, noise_mu=0.0, noise_sigma=[2.5, 2.0, 1.5, 1.0, 0.5]
         # ),
+        split=NoisyLabelSplitConfig(
+            num_noisy_clients=5, noise_flip_percent=[0.25, 0.2, 0.15, 0.1, 0.05]
+        ),
         # split=SplitConfig(name="iid"),
+        # split=SplitConfig(name="natural"),
         dataset=DatasetConfig(
             name="fast_cifar10",
+            # name="fedisic",
+            # name="emnist",
             subsample_fraction=1.0,
         ),
     )
@@ -137,7 +148,7 @@ def get_fedavg_config() -> Config:
     # cfg.desc = "FedAvg on fast cifar10 iid, fednet"
     # cfg.desc = "FedAvg on fast cifar10 iid, twocnnv2"
     # cfg.desc = "FedAvg on fast cifar10 iid, rffl_cnn, dirichlet 0.05"
-    # cfg.desc = "FedAvg on label flip noie"
+    cfg.desc = "FedAvg on varying label flip noise"
     # cfg.desc = (
     #     "FedAvg on fast cifar10 varying noise, mu=0.0, sigma=[2.5, 2.0, 1.5, 1.0, 0.5]"
     # )
@@ -209,8 +220,11 @@ def get_cgsv_config() -> CGSVConfig:
         # split=DirichletSplitConfig(alpha=0.1),
         # split=NoisyImageSplitConfig(num_noisy_clients=3, noise_mu=0.0, noise_sigma=3.0),
         # split=NoisyLabelSplitConfig(num_noisy_clients=2, noise_flip_percent=0.1),
-        split=NoisyImageSplitConfig(
-            num_noisy_clients=5, noise_mu=0.0, noise_sigma=[2.5, 2.0, 1.5, 1.0, 0.5]
+        # split=NoisyImageSplitConfig(
+        #     num_noisy_clients=5, noise_mu=0.0, noise_sigma=[2.5, 2.0, 1.5, 1.0, 0.5]
+        # ),
+        split=NoisyLabelSplitConfig(
+            num_noisy_clients=5, noise_flip_percent=[0.25, 0.2, 0.15, 0.1, 0.05]
         ),
         # split=SplitConfig(name="iid"),
         dataset=DatasetConfig(
@@ -222,9 +236,10 @@ def get_cgsv_config() -> CGSVConfig:
     # f"CGSV on CIFAR10, Noisy Image split 3 Noise, mu=0.0, sigma=3.0, as is in paper"
     # )
 
-    cfg.desc = (
-        "CGSV on fast cifar10 varying noise, mu=0.0, sigma=[2.5, 2.0, 1.5, 1.0, 0.5]"
-    )
+    # cfg.desc = (
+    #     "CGSV on fast cifar10 varying noise, mu=0.0, sigma=[2.5, 2.0, 1.5, 1.0, 0.5]"
+    # )
+    cfg.desc = "CGSV on fast cifar10 varying label noise"
 
     # cfg.desc = f"CGSV on CIFAR10, Noisy Image split 3 Noise, mu=0.0, sigma=3.0, normalizing phis, no delta normalize"
     # cfg.desc = f"CGSV on CIFAR10, Dirichlet split"
@@ -258,20 +273,24 @@ def get_shapfed_config() -> ShapfedConfig:
         ),
         # split=DirichletSplitConfig(alpha=0.01),
         # split=NoisyImageSplitConfig(num_noisy_clients=3, noise_mu=0.0, noise_sigma=3.0),
+        split=NoisyLabelSplitConfig(
+            num_noisy_clients=5, noise_flip_percent=[0.25, 0.2, 0.15, 0.1, 0.05]
+        ),
         # split=NoisyImageSplitConfig(
         #     num_noisy_clients=5, noise_mu=0.0, noise_sigma=[2.5, 2.0, 1.5, 1.0, 0.5]
         # ),
-        split=SplitConfig(name="iid"),
+        # split=SplitConfig(name="iid"),
         dataset=DatasetConfig(
             name="fast_cifar10",
             subsample_fraction=1.0,
         ),
     )
-    cfg.desc = f"shapfed on fast cifar10 with iid split"
+    # cfg.desc = f"shapfed on fast cifar10 with iid split"
+    # cfg.desc = f"shapfed on fast cifar10 with dirichlet split"
     # cfg.desc = (
     #     "Shapfed on fast cifar10 varying noise, mu=0.0, sigma=[2.5, 2.0, 1.5, 1.0, 0.5]"
     # )
-
+    cfg.desc = "Shapfed on fast cifar10 varying label noise"
     return cfg
 
 
@@ -290,10 +309,10 @@ def get_fedhigrad_config() -> FHGConfig:
         aggregate=True,
         sigma_floor=0.01,
         beta=0.4,
-        # phi_method="norm",
+        phi_method="norm",
         # phi_method="delta/sigma",
         # phi_method="delta/sigma_delta",
-        phi_method="delta+sigma",
+        # phi_method="delta+sigma",
         seed=SEED,
         train=TrainConfig(
             epochs=1,
@@ -306,12 +325,15 @@ def get_fedhigrad_config() -> FHGConfig:
             scheduler="exponential",
             lr_decay=0.977,
         ),
-        # split=DirichletSplitConfig(name="dirichlet", alpha=0.01),
+        # split=DirichletSplitConfig(name="dirichlet", alpha=1.0),
         # # split=NoisyImageSplitConfig(num_noisy_clients=3, noise_mu=0.0, noise_sigma=1.0),
         # split=NoisyImageSplitConfig(
         #     num_noisy_clients=5, noise_mu=0.0, noise_sigma=[2.5, 2.0, 1.5, 1.0, 0.5]
         # ),
-        split=NoisyLabelSplitConfig(num_noisy_clients=3, noise_flip_percent=0.2),
+        # split=NoisyLabelSplitConfig(num_noisy_clients=3, noise_flip_percent=0.2),
+        split=NoisyLabelSplitConfig(
+            num_noisy_clients=5, noise_flip_percent=[0.25, 0.2, 0.15, 0.1, 0.05]
+        ),
         # split=SplitConfig(name="iid"),
         dataset=DatasetConfig(
             name="fast_cifar10",
@@ -320,7 +342,10 @@ def get_fedhigrad_config() -> FHGConfig:
         ),
     )
     # cfg.desc = f"Fedhigrad on fast CIFAR10, [2, 2], Noisy Image split"
-    cfg.desc = f"Fedhigrad on fast CIFAR10, noisy label, phi delta + inv sigma"
+    # cfg.desc = f"Fedhigrad on fast CIFAR10, noisy label, phi delta + inv sigma"
+    # cfg.desc = f"Fedhigrad on fast CIFAR10, iid, delta/sigma"
+    # cfg.desc = f"Fedhigrad on fast CIFAR10, dirichlet 1 , delta/sigma"
+    cfg.desc = f"Fedhigrad on fast CIFAR10, varying label noise , 1/sigma"
     # cfg.desc = "Fedhigrad on fast cifar10 varying noise sigma=[2.5, 2.0, 1.5, 1.0, 0.5], delta+invsigma"
     # cfg.desc = "Fedhigrad on fast cifar10, [4], dirichlet split 0.01, delta/sigma"
     # cfg.desc = "Fedhigrad on fast cifar10, [4], dirichle, delta/ sigma"

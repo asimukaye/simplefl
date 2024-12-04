@@ -280,6 +280,7 @@ def run_shapfed(dataset: DatasetPair, model: Module, cfg: ShapfedConfig):
     client_datasets = get_client_datasets(cfg.split, dataset)
     shapley_values = None
     mu = 0.5
+    # mu = 0.9
     ## Create Clients
     # clients: dict[str, ShapfedClient] = {}
     clients: list[ShapfedClient] = []
@@ -349,6 +350,8 @@ def run_shapfed(dataset: DatasetPair, model: Module, cfg: ShapfedConfig):
         "loss": {"train": {}, "eval": {}, "eval_pre": {}, "eval_post": {}},
         "accuracy": {"train": {}, "eval": {}, "eval_pre": {}, "eval_post": {}},
         "round": 0,
+        "weights": {},
+        "cssv": {},
         "weights": {},
         "total_epochs": total_epochs,
         "phase": phase_count,
@@ -451,6 +454,8 @@ def run_shapfed(dataset: DatasetPair, model: Module, cfg: ShapfedConfig):
                 class_shapley_values = mu * class_shapley_values + (1 - mu) * np.array(
                     temp_class_shapley_values
                 )
+            for i, cid in enumerate(client_ids):
+                metrics["cssv"][cid] = shapley_values[i]
 
             # normalized_shapley_values = softmax(shapley_values)  # shapley_values / np.sum(shapley_values)
             normalized_shapley_values = shapley_values / np.sum(shapley_values)
@@ -458,10 +463,14 @@ def run_shapfed(dataset: DatasetPair, model: Module, cfg: ShapfedConfig):
                 shapley_values
             )
 
-        print(shapley_values, normalized_shapley_values)
-        print(class_shapley_values)
+        # print(shapley_values, normalized_shapley_values)
+        # print(class_shapley_values)
 
         weights = normalized_shapley_values
+
+        for i, cid in enumerate(client_ids):
+            metrics["weights"][cid] = weights[i]
+        # ic(metrics)
         server.aggregate(coefficients=weights)
 
         # if one wants to allow the highest-contribution participant to receive full update

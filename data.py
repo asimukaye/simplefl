@@ -5,7 +5,7 @@ import typing as t
 from torch.utils.data import Dataset, Subset
 
 from config import DatasetConfig, DatasetModelSpec, DATA_PATH
-from fldatasets.torchvision import get_cifar10, get_cifar100, get_fast_cifar10
+from fldatasets.torchvision import get_cifar10, get_cifar100, get_fast_cifar10, get_emnist
 from fldatasets.medmnist import fetch_medmnist_dataset
 
 # from fldatasets.flamby import (
@@ -41,6 +41,14 @@ def load_raw_dataset(cfg: DatasetConfig) -> tuple[DatasetPair, DatasetModelSpec]
             model_spec = DatasetModelSpec(num_classes=100, in_channels=3)
         case "medmnist":
             train, test, model_spec = fetch_medmnist_dataset(cfg.name, DATA_PATH)
+        case "emnist":
+            train, test = get_emnist(cfg)
+            model_spec = DatasetModelSpec(num_classes=62, in_channels=1)
+        case "fedisic":
+            from fldatasets.flamby import fetch_flamby_federated, fetch_flamby_pooled, get_flamby_model_spec
+
+            train, test = fetch_flamby_pooled(cfg.name, DATA_PATH)
+            model_spec = get_flamby_model_spec(cfg.name, DATA_PATH)
         case _:
             raise NotImplementedError()
 

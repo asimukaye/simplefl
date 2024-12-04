@@ -12,6 +12,7 @@ from io import StringIO
 from sklearn.metrics import accuracy_score
 ## Root level module. Should not have any dependencies on other modules
 
+
 def get_free_gpus(min_memory_reqd=4096):
     gpu_stats = subprocess.check_output(
         ["nvidia-smi", "--format=csv", "--query-gpu=memory.used,memory.free"]

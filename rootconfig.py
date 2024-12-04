@@ -123,7 +123,9 @@ class SplitConfig:
     # Train test split ratio within the client,
     # Now this is auto determined by the test set size
     # test_fractions: list[float] = field(init=False, default_factory=list)
-
+    def __post_init__(self):
+        # self.test_fractions = [1.0 / self.num_splits] * self.num_splits
+        self.dataset_name = '---'
 
 @dataclass
 class NoisyImageSplitConfig(SplitConfig):
@@ -137,7 +139,7 @@ class NoisyImageSplitConfig(SplitConfig):
 class NoisyLabelSplitConfig(SplitConfig):
     name: str = "noisy_label"
     num_noisy_clients: int = 1
-    noise_flip_percent: float = 0.1
+    noise_flip_percent: float | list = 0.1
 
 
 @dataclass
@@ -181,3 +183,5 @@ class Config:
         self.use_wandb = True
         self.resumed = False
         self.split.num_splits = self.num_clients
+        if self.split.name == "natural":
+            self.split.dataset_name = self.dataset.name

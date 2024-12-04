@@ -154,7 +154,8 @@ class FHGClient:
             # ic(flat_avg_model.shape, flat_test_model.shape)
             # ic((flat_avg_model-flat_test_model).norm())
             # assert flat_avg_model == flat_test_model
-            return results, flat_delta_std, flat_delta_mean
+            # return results, flat_delta_std, flat_delta_mean
+            return results, flat_delta_std
         else:
             self.model, self.flat_model_std = model_mean_std(self.model, new_models)
             return results, self.flat_model_std
@@ -285,11 +286,12 @@ def run_fedhigrad(dataset: DatasetPair, model: Module, cfg: FHGConfig):
 
         train_results = {}
         model_std = {}
-        model_deltas = {}
+        # model_deltas = {}
         for cid in train_ids:
             if cfg.phi_method == "delta/sigma_delta":
                 #  model std will have del sigma in this mode
-                train_results[cid], model_std[cid], model_deltas[cid] = clients[cid].train(curr_round, ret_delta_sigma=True)
+                train_results[cid], model_std[cid] = clients[cid].train(curr_round, ret_delta_sigma=True)
+                # train_results[cid], model_std[cid], model_deltas[cid] = clients[cid].train(curr_round, ret_delta_sigma=True)
             else:
                 train_results[cid], model_std[cid] = clients[cid].train(curr_round)
 

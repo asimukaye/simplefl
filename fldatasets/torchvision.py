@@ -5,10 +5,12 @@ from torch.utils.data import Dataset, Subset
 import numpy as np
 
 from torchvision import transforms
+# from torchvision.transforms import v2
 from torchvision.datasets import CIFAR10, VisionDataset, CIFAR100
 
 # dataset wrapper module
 from config import DatasetConfig, DATA_PATH
+
 
 
 # class VisionClfDataset(Subset):
@@ -48,6 +50,32 @@ def get_cifar10(cfg: DatasetConfig):
         root=DATA_PATH, train=False, download=True, transform=test_transforms
     )
     return VisionClfDataset(train, "CIFAR10"), VisionClfDataset(test, "CIFAR10")
+
+
+def get_emnist(cfg: DatasetConfig):
+    from torchvision.datasets import EMNIST
+
+    train_transforms = transforms.Compose(
+        [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
+    )
+    test_transforms = transforms.Compose(
+        [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
+    )
+    train = EMNIST(
+        root=DATA_PATH,
+        split="balanced",
+        train=True,
+        download=True,
+        transform=train_transforms,
+    )
+    test = EMNIST(
+        root=DATA_PATH,
+        split="balanced",
+        train=False,
+        download=True,
+        transform=test_transforms,
+    )
+    return VisionClfDataset(train, "EMNIST"), VisionClfDataset(test, "EMNIST")
 
 
 # RFFL version
