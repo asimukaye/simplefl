@@ -2,11 +2,9 @@ import torch
 from torch import nn
 from torch.nn import Module
 from torch import Tensor
-import inspect
 import logging
-import importlib
 import torch.nn.functional as F
-from torchvision.models import resnet18, resnet34
+from torchvision.models import resnet18, resnet34, resnet50
 logger = logging.getLogger(__name__)
 
 # Taken from FedFisher for CIFAR10
@@ -243,8 +241,11 @@ MODEL_MAP = {
     "twocnn": TwoCNN,
     "twocnnv2": TwoCNNv2,
     "fednet": FedNet,
-    "resnet18": ResNet18,
-    "resnet34": ResNet34,
+    "resnet18_custom": ResNet18,
+    "resnet18": resnet18,
+    "resnet34": resnet34,
+    "resnet50": resnet50,
+    "resnet34_custom": ResNet34,
     "rffl_cnn": RFFL_CNN,
     "mlpnet": MLP_Net,
 }
