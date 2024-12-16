@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field, asdict, MISSING
 import typing as t
 from functools import partial
-import yaml
+import os
 import torch
 from torch.nn import (
     Module,
@@ -75,7 +75,8 @@ LOSS_MAP = {
 }
 
 SEED = 42
-DATA_PATH = "data"
+
+DATA_PATH = os.getcwd()+"/data"
 
 
 @dataclass

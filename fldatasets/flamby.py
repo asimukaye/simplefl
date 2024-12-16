@@ -7,14 +7,16 @@ import torch
 from rootconfig import DatasetModelSpec
 
 logger = logging.getLogger(__name__)
+
+
 @dataclass
 class DatasetPair:
     train: Subset
     test: Subset
 
 
-def fetch_flamby_pooled(dataset_name: str, root: str)->tuple[Subset, Subset]:
-    logger.debug(f'[DATA LOAD] Fetching dataset: {dataset_name.upper()}')
+def fetch_flamby_pooled(dataset_name: str, root: str) -> tuple[Subset, Subset]:
+    logger.debug(f"[DATA LOAD] Fetching dataset: {dataset_name.upper()}")
 
     match dataset_name:
         case "fedisic":
@@ -24,7 +26,8 @@ def fetch_flamby_pooled(dataset_name: str, root: str)->tuple[Subset, Subset]:
             raise NotImplementedError(f"Dataset {dataset_name} is not implemented.")
     return train_dataset, test_dataset
 
-def custom_pooled(sharded_sets)->tuple[Dataset, Dataset]:
+
+def custom_pooled(sharded_sets) -> tuple[Dataset, Dataset]:
     train_sets = []
     test_sets = []
     for train, test in sharded_sets:
@@ -35,16 +38,21 @@ def custom_pooled(sharded_sets)->tuple[Dataset, Dataset]:
 
     return train_dataset, test_dataset
 
+
 def fetch_flamby_federated(dataset_name: str, root: str, num_splits: int):
-    logger.debug(f'[DATA LOAD] Fetching dataset: {dataset_name.upper()}')
+    logger.debug(f"[DATA LOAD] Fetching dataset: {dataset_name.upper()}")
 
     client_datasets = []
     match dataset_name:
         case "fedisic":
-            assert num_splits < 7, 'FedIsic2019 only supports upto 6 centres'
+            assert num_splits < 7, "FedIsic2019 only supports upto 6 centres"
             for i in range(num_splits):
-                train_dataset = FedIsic2019(center=i, data_path=root, pooled=False, train=True)
-                test_dataset = FedIsic2019(center=i, data_path=root, pooled=False, train=False)
+                train_dataset = FedIsic2019(
+                    center=i, data_path=root, pooled=False, train=True
+                )
+                test_dataset = FedIsic2019(
+                    center=i, data_path=root, pooled=False, train=False
+                )
                 client_datasets.append(DatasetPair(train_dataset, test_dataset))
             pooled_test = FedIsic2019(data_path=root, pooled=True, train=False)
         case _:
@@ -52,7 +60,7 @@ def fetch_flamby_federated(dataset_name: str, root: str, num_splits: int):
     return client_datasets, pooled_test
 
 
-def get_flamby_model_spec(dataset_name: str, root: str)-> DatasetModelSpec:
+def get_flamby_model_spec(dataset_name: str, root: str) -> DatasetModelSpec:
     match dataset_name:
         case "fedisic":
             train_dataset = FedIsic2019(data_path=root, pooled=True)
