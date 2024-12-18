@@ -241,9 +241,9 @@ def resnet_wrapper(in_channels, num_classes, model_name):
     if model_name == "resnet18":
         return resnet18(pretrained=False, num_classes=num_classes)
     elif model_name == "resnet34":
-        return resnet34(pretrained=False, num_classes=num_classes)
+        return resnet34(num_classes=num_classes)
     elif model_name == "resnet50":
-        return resnet50(pretrained=False, num_classes=num_classes)
+        return resnet50(num_classes=num_classes)
     else:
         raise ValueError(f"Model {model_name} not supported")
     
@@ -254,8 +254,8 @@ MODEL_MAP = {
     "fednet": FedNet,
     "resnet18_custom": ResNet18,
     "resnet18": partial(resnet_wrapper, model_name="resnet18"),
-    "resnet34": partial(resnet_wrapper, model_name="resnet18"),
-    "resnet50": partial(resnet_wrapper, model_name="resnet18"),
+    "resnet34": partial(resnet_wrapper, model_name="resnet34"),
+    "resnet50": partial(resnet_wrapper, model_name="resnet50"),
     "resnet34_custom": ResNet34,
     "rffl_cnn": RFFL_CNN,
     "mlpnet": MLP_Net,

@@ -36,9 +36,9 @@ def get_centralized_config() -> Config:
         # model="twocnn",
         # model="twocnnv2",
         # model="fednet",
-        model="resnet34",
+        model="resnet50",
         num_clients=6,
-        num_rounds=500,
+        num_rounds=300,
         seed=SEED,
         train=TrainConfig(
             epochs=1,
@@ -64,7 +64,7 @@ def get_centralized_config() -> Config:
     # cfg.desc = f"Centralized on CIFAR10, Noisy Image split {cfg.split.num_noisy_clients} Noise, mu=0.0, sigma={cfg.split.noise_sigma}"
     # cfg.desc = f"Centralized on CIFAR10, not fast cifar, checking peak accuracy, pooling enabled"
     # cfg.desc = f"Centralized on fast cifar, two cnn v2 model"
-    cfg.desc = f"Centralized on fedisic, resnet34 model"
+    cfg.desc = f"Centralized on fedisic, resnet50 model"
     return cfg
 
 
@@ -92,7 +92,6 @@ def get_standalone_config() -> Config:
         split=NoisyLabelSplitConfig(
             num_noisy_clients=5, noise_flip_percent=[0.25, 0.2, 0.15, 0.1, 0.05]
         ),
-        
         # split=NoisyImageSplitConfig(num_noisy_clients=5, noise_mu=0.0, noise_sigma=[2.5, 2.0, 1.5, 1.0, 0.5]),
         # split=SplitConfig(name="iid"),
         dataset=DatasetConfig(
