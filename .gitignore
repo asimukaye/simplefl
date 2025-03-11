@@ -1,7 +1,7 @@
 # Results, data, logs
 data/
 logs/
-result/
+results/
 test_outputs/
 output/
 .vscode
