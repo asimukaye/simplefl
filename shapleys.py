@@ -18,7 +18,7 @@ SEED = 42
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 random.seed(SEED)
-
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # Hyperparameters
 # EXP_NAME = "non_iid_label_and data_skew"
 EXP_NAME = "coaltion_tests"
@@ -60,12 +60,12 @@ def train_client_model(model, train_loader, epochs=NUM_EPOCHS):
     criterion = nn.CrossEntropyLoss()
     # optimizer = optim.Adam(model.parameters(), lr=0.001)
     optimizer = optim.SGD(model.parameters(), lr=0.01)
-    model.to("cuda:4")
+    model.to(DEVICE)
     # train_loader
     model.train()
     for e in range(epochs):
         for images, labels in train_loader:
-            images, labels = images.to("cuda:4"), labels.to("cuda:4")
+            images, labels = images.to(DEVICE), labels.to(DEVICE)
             optimizer.zero_grad()
             outputs = model(images)
             loss = criterion(outputs, labels)
@@ -78,12 +78,12 @@ def train_client_model(model, train_loader, epochs=NUM_EPOCHS):
 
 # Evaluation function
 def evaluate_model(model, val_loader):
-    model.to("cuda:4")
+    model.to(DEVICE)
     model.eval()
     correct, total = 0, 0
     with torch.no_grad():
         for images, labels in val_loader:
-            images, labels = images.to("cuda:4"), labels.to("cuda:4")
+            images, labels = images.to(DEVICE), labels.to(DEVICE)
             outputs = model(images)
             _, predicted = torch.max(outputs, 1)
             total += labels.size(0)
