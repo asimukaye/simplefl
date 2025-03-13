@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import yaml
 from copy import deepcopy
-
+import json
 # Set random seed for reproducibility
 SEED = 42
 np.random.seed(SEED)
@@ -404,28 +404,49 @@ exp_cfg = {
 }
 with open(path / "exp_cfg.yaml", "w") as file:
     yaml.dump(exp_cfg, file)
-np.save(path / "approx_shapley_values_niid.npy", shapley_values)
+# np.save(path / "approx_shapley_values_niid.npy", shapley_values)
 np.save(path / "true_shapley_values_niid.npy", true_shapley_values)
-np.save(path / "test_evals_niid.npy", test_evals)
+with open(path / "coalitions_niid_values.yaml", "w") as file:
+    yaml.dump(test_vals_coalitions, file)
+
+with open(path / "coalitions_niid_val_values.yaml", "w") as file:
+    yaml.dump(val_coalitions, file)
+# np.save(path / "test_evals_niid.npy", coalitions)
+
 # Compare Reputation Scores vs. Shapley Values
 import matplotlib.pyplot as plt
 
 # client_ids = list(reputation_scores.keys())
-plt.figure()
-plt.scatter(true_shapley_values, shapley_values, label="Clients")
-plt.xlabel("True Shapley")
-plt.ylabel("TMC-Shapley Value")
-plt.title("Comparison of TMC vs. True Shapley Values")
-plt.legend()
-plt.savefig(path / "approx_vs_trueshapley_niid.png")
+# plt.figure()
+# plt.scatter(true_shapley_values, shapley_values, label="Clients")
+# plt.xlabel("True Shapley")
+# plt.ylabel("TMC-Shapley Value")
+# plt.title("Comparison of TMC vs. True Shapley Values")
+# plt.legend()
+# plt.savefig(path / "approx_vs_trueshapley_niid.png")
 
-plt.figure()
-plt.scatter(test_evals, shapley_values, label="Clients")
-plt.xlabel("Test accuracies")
-plt.ylabel("TMC-Shapley Value")
-plt.title("Comparison of TMC shapley values vs. Test accuracies")
-plt.legend()
-plt.savefig(path / "tmcshapley_vs_testacc_niid.png")
+# plt.figure()
+# plt.scatter(test_evals, shapley_values, label="Clients")
+# plt.xlabel("Test accuracies")
+# plt.ylabel("TMC-Shapley Value")
+# plt.title("Comparison of TMC shapley values vs. Test accuracies")
+# plt.legend()
+# plt.savefig(path / "tmcshapley_vs_testacc_niid.png")
+
+# plt.figure()
+# plt.scatter(test_evals, true_shapley_values, label="Clients")
+# plt.xlabel("Test accuracies")
+# plt.ylabel("True Shapley Value")
+# plt.title("Comparison of True shapley values vs. Test accuracies")
+# plt.legend()
+# plt.savefig(path / "trueshapley_vs_testacc_niid.png")
+
+test_evals = []
+for i in range(NUM_CLIENTS):
+    test_eval = test_vals_coalitions[frozenset({i})]
+    test_evals.append(test_eval)
+test_accs = np.array(list(test_vals_coalitions.values()))
+
 
 plt.figure()
 plt.scatter(test_evals, true_shapley_values, label="Clients")
@@ -434,3 +455,29 @@ plt.ylabel("True Shapley Value")
 plt.title("Comparison of True shapley values vs. Test accuracies")
 plt.legend()
 plt.savefig(path / "trueshapley_vs_testacc_niid.png")
+
+client_data_lengths = [len(c_idx) for c_idx in client_data_indices]
+plt.figure()
+plt.scatter(client_data_lengths, true_shapley_values, label="Clients")
+plt.xlabel("Data sizes")
+plt.ylabel("True Shapley Value")
+plt.title("Comparison of True shapley values vs. Data sizes")
+plt.legend()
+plt.savefig(path / "trueshapley_vs_datasize.png")
+
+
+plt.figure()
+plt.scatter(client_data_lengths, true_shapley_values, label="Clients")
+plt.xlabel("Data sizes")
+plt.ylabel("True Shapley Value")
+plt.title("Comparison of Test accuracies vs. Data sizes")
+plt.legend()
+plt.savefig(path / "trueshapley_vs_datasize.png")
+
+# plt.figure()
+# plt.scatter(test_evals, true_shapley_values, label="Clients")
+# plt.xlabel("Test accuracies")
+# plt.ylabel("True Shapley Value")
+# plt.title("Comparison of True shapley values vs. Test accuracies")
+# plt.legend()
+# plt.savefig(path / "trueshapley_vs_testacc_niid.png")
